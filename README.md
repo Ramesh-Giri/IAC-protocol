@@ -77,7 +77,26 @@ before                          after
                                 ~/work/iac-org/skyzai/
 ```
 
-Three things it will not do quietly: it refuses to move a project with
+**Name it whatever you like.** `--name vaibhav-hub`, or just clone into any
+folder name — nothing keys off it. The tools find their own root by walking up
+until they see `agentmail/bin/`, so `iac-org`, `my-org` and
+`totally-different-name` all work identically.
+
+Renaming it **after** setup is a different matter, because the roster stores
+absolute paths on purpose (a relative one silently produces a seat that never
+matches its own process). Rename the folder and the dashboard immediately shows
+every seat as `UNREACHABLE` — loudly wrong rather than quietly broken. Three
+places to update, then restart the watchers:
+
+```sh
+# 1. every home in the roster
+sed -i '' 's|/old/path/org|/new/path/org|g' .agent-mail/roster.json
+# 2. the overseer's identity file, and 3. each project's CLAUDE.md
+sed -i '' 's|/old/path/org|/new/path/org|g' CLAUDE.md */CLAUDE.md
+agentmail/bin/network-dashboard        # every seat should be back
+```
+
+Three things `agentmail-adopt` will not do quietly: it refuses to move a project with
 uncommitted work (commit, stash, or `--force`); it offers `--link` to symlink
 instead of moving when a path can't change; and it tells you, every time, that
 **any shell or agent session inside a moved project now has a stale working
