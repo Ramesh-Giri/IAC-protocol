@@ -6,8 +6,13 @@
    your *org root*. Nothing inside depends on its name.
 2. Put your project folders **inside it**, beside `agentmail/`. Each should be
    its own git repo; they stay untracked here (see the root `.gitignore`).
-3. Open a terminal in the org root, run `claude`, and paste **this entire
-   file** as your first message.
+3. Open a terminal in the org root, run `claude`, and either paste **this
+   entire file** as your first message, or — since it is already in the repo —
+   just say:
+
+   > Read `agentmail/SETUP_PROMPT.md` and follow it to build my agent network
+   > over this folder. Run `agentmail/bin/agentmail-scan --all` first and show
+   > me what you found before you create anything.
 
 Claude does the rest, asks before anything that matters, and derives every
 name and path from *your* folder — nothing is preconfigured for anyone else.

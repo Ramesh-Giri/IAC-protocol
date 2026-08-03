@@ -25,15 +25,26 @@ through a shared directory; everything durable is a file you can read with
 ## Quick start
 
 ```sh
-git clone <this repo> my-org && cd my-org
-# drop your project folders in beside agentmail/
-agentmail/bin/agentmail-scan --all      # read-only: what would a network here look like?
-claude                                  # then paste agentmail/SETUP_PROMPT.md
+git clone https://github.com/Ramesh-Giri/IAC-protocol my-org && cd my-org
+# drop your project folders in, beside agentmail/
+claude
 ```
 
-The scan writes nothing. The setup prompt does the rest: seats, roster,
-identity files, a live self-test of the mail path, the dashboard, and the
-exact commands to launch each agent.
+Then type this as your **first prompt**:
+
+> **Read `agentmail/SETUP_PROMPT.md` and follow it to build my agent network
+> over this folder. Run `agentmail/bin/agentmail-scan --all` first and show me
+> what you found before you create anything.**
+
+That is the whole setup. The scan is read-only; from there Claude proposes a
+roster from *your* folders, asks you the handful of things it cannot know
+(site name, model tier per repo, whether children run unattended), then
+creates the seats, writes the roster and identity files, proves the mail path
+end to end, builds the dashboard, and prints the commands to launch each
+agent.
+
+Prefer to see it first? `agentmail/bin/agentmail-scan --all` writes nothing and
+tells you what a network over this folder would look like.
 
 **Requirements:** Python 3.9+ and git. macOS or Linux. Claude Code (or any
 agent runtime that can run a shell command and watch a file).
