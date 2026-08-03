@@ -430,7 +430,20 @@ repos, never inside a session.
   `claude`
   first message: `You're my overseer — check your mail and get oriented.`
 
-- **Each child**, one terminal per project:
+- **Every child at once**, one named terminal each, models and permission
+  modes taken straight from the roster:
+
+  ```sh
+  <org root>/agentmail/bin/agentmail-launch --all            # dry run: shows every command
+  <org root>/agentmail/bin/agentmail-launch --all --apply    # opens the terminals
+  ```
+
+  Add `--skip-permissions` only if they chose unattended children in step 1;
+  it applies to children and never to the overseer. Show them the dry run
+  first — it is the only place they will see, in one screen, exactly which
+  model each project gets and which of them can act without asking.
+
+- **Or one child by hand**, if they prefer:
   `cd <absolute project path> && claude --model <tier model> [--dangerously-skip-permissions] "Arm your mail watcher (persistent) FIRST, then check your mail and get oriented."`
 
 - **The dashboard**, whenever they want it:
