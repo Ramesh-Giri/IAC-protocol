@@ -47,10 +47,70 @@ document is enough to finish the job.
   flags, relocate files, or work around it.
 - **Never put a secret in mail, in the roster, or in a CLAUDE.md.**
 - **The human decides anything irreversible.** You propose; they approve.
+- **This document is a procedure, not a cage.** The human can interrupt,
+  reorder, skip or override any step, and can ask for things it never mentions
+  — a different directory layout, extra seats, a project left out, a council
+  seat on another model, no dashboard at all. Do what they ask, tell them
+  which step it affects, and carry on from there. Where their instruction
+  conflicts with a rule above, say so once, plainly, and then follow their
+  decision: these are their repos and their machine.
 
 ---
 
-### Step 0 — first, work out which of two jobs this is
+### Step 0a — are you even in the right directory?
+
+Most people meet this toolkit while working **inside one project**, and hand
+it to the agent already running there. If that is you — your working directory
+is a project repo, not an org root — do this first.
+
+```
+<toolkit>/agentmail/bin/agentmail-adopt          # dry run: prints a plan, changes nothing
+```
+
+It reports one of three situations, and you act on what it says:
+
+1. **"Already inside that org root"** — nothing to move. Carry on to step 0b.
+2. **An org root was found nearby** — one already exists (you, or a colleague,
+   set it up earlier). The plan moves this project *into that one*. Do not
+   create a second org root beside it; a rival network is worse than no
+   network.
+3. **No org root within two directory levels** — the plan creates one beside
+   the project and moves the project in. Check the proposed name with the
+   human first; `--name` changes it.
+
+Then, once the human has agreed to the plan:
+
+```
+<toolkit>/agentmail/bin/agentmail-adopt --apply           # or --link, see below
+```
+
+Rules you must not skip here:
+
+- **Show the human the dry run and get their agreement before `--apply`.**
+  This moves a directory they are working in. It is reversible with a `mv`,
+  but only if they know it happened.
+- **Uncommitted work blocks the move** by default, because relocating a
+  directory relocates their uncommitted work with it. Ask them to commit or
+  stash. `--force` exists; prefer not to use it.
+- **`--link` symlinks instead of moving.** Use it when the project cannot move
+  — another tool has the path hard-coded, it is a mount, or several sessions
+  are open in it.
+- **After a move, every session inside that project has a stale working
+  directory, including you.** Tell the human plainly: restart their terminals
+  and their agent sessions at the new path. Do not keep working from the old
+  one and do not try to `cd` your way out of it — a moved cwd on macOS keeps
+  resolving to the old inode and your relative paths will quietly write to the
+  wrong place.
+- A brand-new org root has **no toolkit in it yet**. Clone this repo into it
+  (or copy the `agentmail/` directory there) before running anything else.
+
+Repeat for each further project the human wants in the network: run
+`agentmail-adopt` from inside it, and it will find the org root the first one
+created and join it.
+
+---
+
+### Step 0b — first, work out which of two jobs this is
 
 ```
 ls <org root>/.agent-mail/roster.json

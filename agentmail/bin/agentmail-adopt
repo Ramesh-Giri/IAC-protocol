@@ -1,0 +1,245 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""agentmail-adopt — bring a project you are already sitting inside into an
+org root, creating that org root only if one does not already exist.
+
+    agentmail-adopt [--project DIR] [--org-root DIR] [--name NAME]
+                    [--link] [--apply] [--force]
+
+DRY RUN BY DEFAULT. Nothing moves until you pass --apply. The plan it prints
+is the plan it executes.
+
+WHY THIS EXISTS
+    The common way people meet this toolkit is not "clone it, then drop
+    projects in". It is: they are working in one repo, they hear about this,
+    and they hand the repo URL to the agent already running in that project.
+    That agent is one directory below where the network belongs, and the
+    honest fix is to restructure — carefully, visibly, and only once.
+
+WHAT IT DOES
+    1. Works out whether <project> is already inside an org root (a directory
+       carrying agentmail/bin/). If it is, there is nothing to do and it says
+       so — running this twice is safe.
+    2. Otherwise looks for an existing org root nearby: every ancestor of the
+       project, then directories beside it, two levels out and no further. The
+       FIRST one found wins, so the second project you adopt joins the org root
+       the first one created instead of starting a rival network. It always
+       prints where it looked.
+    3. If none exists, plans a new org root beside the project and moves the
+       project into it.
+
+THE HAZARD IT REFUSES TO HIDE
+    Moving a directory out from under a running shell or agent session leaves
+    that session with a stale working directory: on macOS the process keeps
+    the old inode and every relative path silently resolves somewhere you did
+    not mean. Any session inside the project — including the one that ran this
+    command — must be restarted at the new path afterwards. This is printed
+    every time, and it is why --link exists: a symlink leaves the project
+    exactly where it is.
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import shutil
+import subprocess
+import sys
+
+TOOL_VERSION = "1.0.0"
+TOOLKIT_MARKER = os.path.join("agentmail", "bin", "agentmail-scan")
+SPOOL = ".agent-mail"
+SKIP_DIRS = {"node_modules", ".git", "venv", ".venv", "dist", "build", "target",
+             "Library", "Applications", "System", "__pycache__"}
+
+
+def is_org_root(path: str) -> bool:
+    return os.path.isfile(os.path.join(path, TOOLKIT_MARKER))
+
+
+def is_git_repo(path: str) -> bool:
+    return os.path.exists(os.path.join(path, ".git"))
+
+
+def uncommitted(path: str) -> int | None:
+    if not is_git_repo(path):
+        return None
+    try:
+        p = subprocess.run(["git", "status", "--porcelain"], cwd=path,
+                           capture_output=True, text=True, timeout=10)
+        return len([l for l in p.stdout.splitlines() if l.strip()]) if p.returncode == 0 else None
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+
+
+def ancestors(path: str) -> list[str]:
+    out, d = [], os.path.abspath(path)
+    while True:
+        parent = os.path.dirname(d)
+        if parent == d:
+            return out
+        out.append(parent)
+        d = parent
+
+
+# How far to look sideways for an existing org root. Two levels — the
+# project's own parent and its grandparent — covers ~/work/circle finding
+# ~/work/iac-org and ~/iac-org, and stops well short of crawling /Users or $HOME.
+# A wider search is not "more helpful": it finds unrelated directories by luck
+# and adopts a project into somebody else's network. Anything further away must
+# be named explicitly with --org-root.
+SIBLING_LEVELS = 2
+
+
+def find_org_root(project: str) -> tuple[str | None, str, list[str]]:
+    """Return (org_root, how_it_was_found, directories_searched).
+
+    The search is deliberately shallow and always reports where it looked, so
+    a result — or the absence of one — is never mysterious.
+    """
+    searched = []
+    for anc in ancestors(project):
+        searched.append(anc)
+        if is_org_root(anc):
+            return anc, f"an ancestor of the project ({anc})", searched
+    for anc in ancestors(project)[:SIBLING_LEVELS]:
+        try:
+            entries = sorted(os.listdir(anc))
+        except OSError:
+            continue
+        searched.append(os.path.join(anc, "*"))
+        for name in entries:
+            cand = os.path.join(anc, name)
+            if name in SKIP_DIRS or not os.path.isdir(cand):
+                continue
+            if os.path.abspath(cand) == os.path.abspath(project):
+                continue
+            if is_org_root(cand):
+                return cand, f"a directory beside the project ({cand})", searched
+    return None, "no org root within two directory levels", searched
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(
+        prog="agentmail-adopt",
+        description="Move a project into an org root, creating one only if needed. Dry run by default.")
+    ap.add_argument("--project", default=os.getcwd(), help="the project to adopt (default: cwd)")
+    ap.add_argument("--org-root", help="use this org root instead of searching")
+    ap.add_argument("--name", help="name for a NEW org root (default: <project>-org)")
+    ap.add_argument("--link", action="store_true",
+                    help="symlink the project into the org root instead of moving it")
+    ap.add_argument("--apply", action="store_true", help="actually do it (otherwise: print the plan)")
+    ap.add_argument("--force", action="store_true", help="proceed even with uncommitted changes")
+    args = ap.parse_args(argv)
+
+    project = os.path.abspath(args.project)
+    if not os.path.isdir(project):
+        print(f"agentmail-adopt: not a directory: {project}", file=sys.stderr)
+        return 1
+    pname = os.path.basename(project.rstrip("/"))
+
+    print(f"project      {project}")
+    if is_org_root(project):
+        print("\nThis directory is an ORG ROOT, not a project — it already carries agentmail/bin/.")
+        print("Drop your project folders inside it and run agentmail-scan.")
+        return 0
+
+    # 1. already home?
+    for anc in ancestors(project):
+        if is_org_root(anc):
+            print(f"org root     {anc}")
+            print(f"\nAlready inside that org root — nothing to move.")
+            print(f"Next:  {os.path.join(anc, 'agentmail/bin/agentmail-scan')} --all")
+            return 0
+
+    # 2. find one, or plan a new one
+    if args.org_root:
+        org, how, searched = os.path.abspath(args.org_root), "given with --org-root", []
+        if not is_org_root(org):
+            print(f"\n--org-root {org} does not carry {TOOLKIT_MARKER}.", file=sys.stderr)
+            print("Clone the toolkit there first, or omit --org-root to create one.", file=sys.stderr)
+            return 2
+    else:
+        org, how, searched = find_org_root(project)
+
+    creating = org is None
+    if creating:
+        org = os.path.join(os.path.dirname(project), args.name or f"{pname}-org")
+
+    dest = os.path.join(org, pname)
+    dirty = uncommitted(project)
+
+    print(f"org root     {org}" + ("   (WILL BE CREATED)" if creating else ""))
+    print(f"found via    {how}")
+    if creating and searched:
+        print(f"searched     {', '.join(searched[:6])}")
+        print(f"             (nothing there carried {TOOLKIT_MARKER}; pass --org-root to point at one)")
+    print(f"destination  {dest}")
+    print(f"method       {'symlink (project stays put)' if args.link else 'move'}")
+    if dirty:
+        print(f"git          {dirty} uncommitted change(s) in the project")
+    print()
+
+    if os.path.exists(dest):
+        print(f"REFUSING: {dest} already exists. Nothing was touched.", file=sys.stderr)
+        return 2
+    if dirty and not args.force and not args.link:
+        print("REFUSING: the project has uncommitted work and moving it would relocate that work.",
+              file=sys.stderr)
+        print("Commit or stash first, or pass --force, or use --link to leave it in place.",
+              file=sys.stderr)
+        return 2
+
+    print("PLAN")
+    n = 1
+    if creating:
+        print(f"  {n}. mkdir {org}"); n += 1
+        print(f"  {n}. clone the toolkit into it, so it becomes an org root:"); n += 1
+        print(f"       git clone <IAC repo URL> {org}")
+        print(f"       (or copy an existing agentmail/ directory there)")
+    if args.link:
+        print(f"  {n}. ln -s {project} {dest}"); n += 1
+    else:
+        print(f"  {n}. mv {project} {dest}"); n += 1
+    print(f"  {n}. {os.path.join(org, 'agentmail/bin/agentmail-scan')} --all"); n += 1
+    print(f"  {n}. open a Claude session IN {org} and give it agentmail/SETUP_PROMPT.md")
+    print()
+
+    if not args.apply:
+        print("dry run — nothing was changed. Re-run with --apply to do it.")
+        return 0
+
+    # --- execute ---------------------------------------------------------
+    try:
+        if creating:
+            os.makedirs(org, exist_ok=False)
+            print(f"created  {org}")
+        if args.link:
+            os.symlink(project, dest)
+            print(f"linked   {dest} -> {project}")
+        else:
+            shutil.move(project, dest)
+            print(f"moved    {project} -> {dest}")
+    except OSError as exc:
+        print(f"\nFAILED: {exc}", file=sys.stderr)
+        print("Nothing further was attempted. Check the paths and try again.", file=sys.stderr)
+        return 1
+
+    print()
+    if creating:
+        print("The org root has no toolkit yet. Put one there:")
+        print(f"  git clone <IAC repo URL> /tmp/iac && mv /tmp/iac/agentmail {org}/ \\")
+        print(f"    && mv /tmp/iac/README.md /tmp/iac/.gitignore {org}/ 2>/dev/null; rm -rf /tmp/iac")
+        print()
+    if not args.link:
+        print("!! Any shell or agent session whose working directory was inside that project")
+        print("!! now has a STALE cwd: relative paths will resolve somewhere you did not mean.")
+        print(f"!! Restart them at: {dest}")
+        print()
+    print("Then, from the org root:")
+    print(f"  {os.path.join(org, 'agentmail/bin/agentmail-scan')} --all")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
