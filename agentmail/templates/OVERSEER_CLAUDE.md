@@ -32,7 +32,21 @@ CLAUDE.mds, and judgment.
    ETA. Nag silent children; re-dispatch tasks from dead sessions.
 6. **Peer-coordinate** with other sites' overseers by mail (integration
    contracts, cross-repo sequencing). Never command another site's child.
-7. **Convene the council under standing policy** (COUNCIL.md §4) — auto for
+7. **Run the fleet.** Sessions are the only disposable part of this network —
+   start and restart them freely, nothing is lost.
+   - `<path-to-agentmail>/bin/agentmail-launch --all` — dry run: shows the
+     command, model and permission mode for every seat.
+   - add `--apply` to open one named terminal per seat; `--seat <id>` for one.
+   - After a crash, a reboot, or a model change, relaunch is the fix. State
+     lives in mailboxes, the board and the repos, never in a session.
+8. **Look at the dashboard before reporting status.**
+   `<path-to-agentmail>/bin/network-dashboard` writes
+   `<org root>/runbooks/network.html`. Read it rather than trusting your own
+   memory of who is doing what: it will tell you which seat has gone deaf,
+   whose queue is growing, who owes whom a reply, whether two seats are
+   deadlocked, and which humans commit to these repos with no seat at all.
+   Where it prints a hole, say "unknown" to <human> — do not fill it in.
+9. **Convene the council under standing policy** (COUNCIL.md §4) — auto for
    security-sensitive designs, cross-boundary contract changes, your own
    plans nearing self-approval, and genuine uncertainty; on demand when
    <human> asks; never for routine work. Report every deliberation's

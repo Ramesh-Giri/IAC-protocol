@@ -146,6 +146,14 @@ agent runtime that can run a shell command and watch a file).
 
 ## What you get
 
+**Model tiers per project, and one command to start them.** The roster assigns
+a model to each repo — the strongest for anything touching money, keys or
+production; a faster one for app and tooling work — and `agentmail-launch`
+opens one named terminal per seat with that model, the right working directory,
+and the watcher-first boot prompt. Dry run by default, so you can see exactly
+which project gets which model, and which sessions can act unattended, on one
+screen. The overseer always prompts; the launcher refuses to do otherwise.
+
 **A supervision tree.** One overseer — the only agent you talk to — and one
 child per repository. Facts flow sideways between children; commitments flow
 up through the overseer; anything irreversible flows to you.
@@ -193,6 +201,7 @@ Python 3.9 and 3.12 — see [`.github/workflows/tests.yml`](.github/workflows/te
 |---|---|
 | `agentmail/bin/agentmail-adopt` | move a project you're inside into an org root — dry run by default |
 | `agentmail/bin/agentmail-scan` | find projects here and propose a roster — read-only |
+| `agentmail/bin/agentmail-launch` | start every seat in a named terminal with its assigned model — dry run by default |
 | `agentmail/bin/agentmail-init` | create a seat's maildir |
 | `agentmail/bin/mail-send` | send a message |
 | `agentmail/bin/mail-read` | read a seat's mail and mark it acknowledged |
