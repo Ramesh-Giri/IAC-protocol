@@ -103,6 +103,15 @@ Rules you must not skip here:
   wrong place.
 - A brand-new org root has **no toolkit in it yet**. Clone this repo into it
   (or copy the `agentmail/` directory there) before running anything else.
+- **The org root's name is free — offer it.** `--name <whatever>` sets it, and
+  nothing anywhere keys off the name: every tool finds its root by walking up
+  until it sees `agentmail/bin/`. Ask the human what to call it rather than
+  imposing a default they will live with for months.
+- Renaming it **later** is not free: the roster stores absolute `home` paths
+  by design, so a rename makes every seat show as `UNREACHABLE` in the
+  dashboard until `.agent-mail/roster.json`, the root `CLAUDE.md` and each
+  project's `CLAUDE.md` are updated and the watchers restarted. Say this when
+  they choose the name, not after.
 
 Repeat for each further project the human wants in the network: run
 `agentmail-adopt` from inside it, and it will find the org root the first one
