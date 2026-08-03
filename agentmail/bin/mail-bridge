@@ -1,0 +1,74 @@
+#!/usr/bin/env bash
+# mail-bridge — give ANY headless CLI model a live AgentMail seat.
+#
+# Watches <agent-id>'s inbox; for each arriving message, feeds a prompt
+# (headers + body) to <command> on stdin, captures stdout, and mails it
+# back to the sender on the same thread. The CLI runs only while
+# answering — no persistent session, no human in the loop.
+#
+#   mail-bridge codex  -- codex exec --sandbox read-only -
+#   mail-bridge gemini -- gemini -p -
+#   mail-bridge echo-test -- cat            # loopback for testing
+#
+# The bridge is deliberately dumb: no protocol knowledge beyond
+# read → invoke → reply. Guardrails live in the invoked command's own
+# flags (sandbox mode, workspace dir, allowed tools) — see
+# ORCHESTRATION.md §5: the mail is universal, the leash is per-runtime.
+#
+# Usage: mail-bridge <agent-id> [-d MAIL_DIR] [-i POLL_SECONDS] [--once] -- <command...>
+set -euo pipefail
+
+MAIL_DIR="${AGENTMAIL_DIR:-.agent-mail}"
+AGENT="" INTERVAL=10 ONCE=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -d) MAIL_DIR="$2"; shift 2;;
+    -i) INTERVAL="$2"; shift 2;;
+    --once) ONCE=1; shift;;
+    --) shift; break;;
+    *) AGENT="$1"; shift;;
+  esac
+done
+[ -n "$AGENT" ] && [ $# -gt 0 ] || {
+  echo "usage: mail-bridge <agent-id> [-d dir] [-i secs] [--once] -- <command...>" >&2; exit 2; }
+NEW="$MAIL_DIR/$AGENT/new"; CUR="$MAIL_DIR/$AGENT/cur"
+[ -d "$NEW" ] || { echo "no such inbox: $NEW (run agentmail-init)" >&2; exit 1; }
+BIN="$(cd "$(dirname "$0")" && pwd)"
+
+field() { sed -n "s/^$2: //p" "$1" | head -1; }
+
+handle() { # $1 = message file already moved to cur/; rest = command
+  local f="$1" from subject thread reply
+  shift
+  from="$(field "$f" from)"; subject="$(field "$f" subject)"; thread="$(field "$f" thread)"
+  [ -n "$from" ] || return 0
+  reply="$({
+    echo "You are agent '$AGENT' in an inter-agent mail network."
+    echo "A message arrived. Reply with the message BODY only — no headers,"
+    echo "no signature. Be precise and complete; the reply is sent verbatim."
+    echo ""
+    cat "$f"
+  } | "$@" 2>>"$MAIL_DIR/$AGENT/bridge.log" || true)"
+  if [ -n "$reply" ]; then
+    printf '%s\n' "$reply" | "$BIN/mail-send" -d "$MAIL_DIR" \
+      --from "$AGENT" --to "$from" --subject "RE: $subject" \
+      ${thread:+--thread "$thread"} --type info >/dev/null
+    echo "bridge[$AGENT]: answered $(basename "$f") → $from"
+  else
+    echo "bridge[$AGENT]: no reply for $(basename "$f") — see $MAIL_DIR/$AGENT/bridge.log" >&2
+  fi
+}
+
+drain() {
+  local f b
+  for f in "$NEW"/*.md; do
+    [ -e "$f" ] || break
+    b="$(basename "$f")"
+    mv "$f" "$CUR/$b" 2>/dev/null || continue   # ack; loser of a race skips
+    handle "$CUR/$b" "$@"
+  done
+}
+
+if [ "$ONCE" = 1 ]; then drain "$@"; exit 0; fi
+echo "bridge[$AGENT]: watching $NEW (poll ${INTERVAL}s) → $*"
+while :; do drain "$@"; sleep "$INTERVAL"; done

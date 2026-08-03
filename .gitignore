@@ -1,0 +1,53 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# This org root is TWO things at once:
+#   1. your working folder — your project repos, your mail, your dashboards
+#   2. the source of one publishable toolkit — agentmail/
+#
+# Only (2) is tracked. This file is a WHITELIST, not a blocklist: everything at
+# the root is ignored, and a handful of things are re-admitted by name. A
+# blocklist would leak the first project folder someone forgets to list; this
+# cannot. If a new file at the root is not showing up in `git status`, that is
+# working as designed — add an explicit `!` line for it below.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ignore everything at the root, including dotfiles
+/*
+
+# ── re-admit the toolkit and its front page ─────────────────────────────────
+!/.gitignore
+!/README.md
+!/LICENSE
+!/agentmail/
+!/.github/
+
+# ── never tracked, and why ──────────────────────────────────────────────────
+#
+# /<your projects>/     each project is its own git repo with its own remote.
+#                       Nesting them here would either swallow their history
+#                       or push someone else's code into this one.
+#
+# /.agent-mail/         the live mail spool. It holds the actual bodies of
+#                       every message your agents have sent each other —
+#                       plans, credentials-adjacent discussion, client names.
+#                       A cloner does not need your mail; they need the shape,
+#                       and `agentmail/bin/agentmail-init` builds that in one
+#                       command. Shipping the spool would publish your
+#                       network's private correspondence.
+#
+# /CLAUDE.md            your overseer's identity: your name, your machine, your
+#                       absolute paths, your standing rules. The blank version
+#                       ships as agentmail/templates/OVERSEER_CLAUDE.md.
+#
+# /runbooks/            generated dashboards and deploy notes. network.html is
+#                       a rendering of your live network — seat names, message
+#                       subjects, contributor emails, commit messages. It is
+#                       regenerated in two seconds from source; it should never
+#                       be a commit.
+#
+# /overseer-tasks.md    your task board: what you are actually working on.
+
+# ── inside the toolkit, a few things are still generated ────────────────────
+agentmail/**/__pycache__/
+agentmail/**/*.pyc
+agentmail/**/.DS_Store
+.DS_Store

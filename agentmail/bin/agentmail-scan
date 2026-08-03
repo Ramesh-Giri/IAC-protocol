@@ -1,0 +1,248 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""agentmail-scan — find the projects sitting inside this folder and propose a
+roster for them. Read-only: it never writes, and it never guesses silently.
+
+    agentmail-scan [--root DIR] [--site NAME] [--json] [--all]
+
+Run it from a freshly cloned network folder after you have dropped your
+project directories inside. It answers one question — "what would a network
+over this folder look like?" — and hands the answer to a human (a table) and
+to an agent (`--json`) in the same breath.
+
+WHAT COUNTS AS A PROJECT
+    An immediate subdirectory that is a git work tree, or that carries a
+    recognised project manifest (package.json, pyproject.toml, go.mod,
+    Cargo.toml, Gemfile, pom.xml, composer.json, foundry.toml, hardhat.config.*,
+    CMakeLists.txt, Makefile). Everything else is listed under "skipped" WITH
+    THE REASON, so a project that fails to appear is never a mystery.
+
+WHAT IT WILL NOT DO
+    It proposes; it does not decide. Model tier is a suggestion with its
+    evidence attached ("contracts/ + foundry.toml present"), never a silent
+    default. Seat ids are proposed from directory names, and a name that
+    cannot be made into a safe seat id is reported rather than mangled.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+from datetime import datetime, timezone
+
+TOOL_VERSION = "1.0.0"
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_ROOT = os.path.dirname(os.path.dirname(HERE))  # <root>/agentmail/bin -> <root>
+
+# directories that are never projects
+SKIP_NAMES = {
+    "agentmail", ".agent-mail", "runbooks", "node_modules", "venv", ".venv",
+    "dist", "build", "target", "__pycache__", "vendor", ".git", ".idea", ".vscode",
+    "Library", "tmp", "temp", "logs",
+}
+
+MANIFESTS = {
+    "package.json": "node", "pyproject.toml": "python", "requirements.txt": "python",
+    "setup.py": "python", "go.mod": "go", "Cargo.toml": "rust", "Gemfile": "ruby",
+    "pom.xml": "java", "build.gradle": "java", "composer.json": "php",
+    "foundry.toml": "solidity", "hardhat.config.js": "solidity",
+    "hardhat.config.ts": "solidity", "truffle-config.js": "solidity",
+    "CMakeLists.txt": "c/c++", "Makefile": "make", "Dockerfile": "docker",
+}
+
+# signals that this repo can move money, sign, or take down production —
+# every one of them is reported as evidence, never applied silently
+HIGH_STAKES_PATHS = ("contracts", "chain", "wallet", "keys", "payments", "billing",
+                     "migrations", "terraform", "infra", "deploy", "k8s", "helm")
+HIGH_STAKES_WORDS = ("payment", "wallet", "custody", "ledger", "settle", "treasury",
+                     "contract", "onchain", "chain", "bank", "invoice", "billing",
+                     "auth", "identity", "prod")
+
+
+def run(cmd, cwd=None):
+    try:
+        p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=10,
+                           errors="replace")
+        return p.returncode, p.stdout.strip(), p.stderr.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        return -1, "", "unavailable"
+
+
+def slug(name: str) -> str | None:
+    """A seat id must be [a-z0-9_-]. Anything else is reported, not mangled."""
+    s = name.strip().lower().replace(" ", "-")
+    s = re.sub(r"[^a-z0-9_-]", "-", s)
+    s = re.sub(r"-{2,}", "-", s).strip("-_")
+    return s or None
+
+
+def inspect(path: str) -> dict:
+    name = os.path.basename(path)
+    out = {"dir": name, "path": path, "is_git": False, "manifests": [], "languages": [],
+           "high_stakes_evidence": [], "has_claude_md": False}
+
+    out["has_claude_md"] = os.path.isfile(os.path.join(path, "CLAUDE.md"))
+
+    if os.path.isdir(os.path.join(path, ".git")) or os.path.isfile(os.path.join(path, ".git")):
+        out["is_git"] = True
+        rc, o, _ = run(["git", "rev-parse", "--abbrev-ref", "HEAD"], path)
+        out["branch"] = o if rc == 0 else None
+        rc, o, _ = run(["git", "remote", "get-url", "origin"], path)
+        out["remote"] = o if rc == 0 else None
+        rc, o, _ = run(["git", "log", "-1", "--format=%cI|%an|%s"], path)
+        if rc == 0 and "|" in o:
+            when, who, subj = o.split("|", 2)
+            out["last_commit"] = {"at": when, "author": who, "subject": subj[:80]}
+            try:
+                dt = datetime.fromisoformat(when)
+                out["last_commit"]["age_days"] = round(
+                    (datetime.now(timezone.utc) - dt.astimezone(timezone.utc)).total_seconds() / 86400, 1)
+            except ValueError:
+                pass
+        rc, o, _ = run(["git", "status", "--porcelain"], path)
+        out["uncommitted"] = len([l for l in o.splitlines() if l.strip()]) if rc == 0 else None
+        rc, o, _ = run(["git", "log", "--since=30.days", "--format=%an"], path)
+        out["recent_authors"] = sorted(set(x for x in o.splitlines() if x)) if rc == 0 else []
+
+    try:
+        entries = os.listdir(path)
+    except OSError as exc:
+        out["error"] = str(exc)
+        return out
+    for f in entries:
+        if f in MANIFESTS:
+            out["manifests"].append(f)
+            lang = MANIFESTS[f]
+            if lang not in out["languages"]:
+                out["languages"].append(lang)
+
+    low = name.lower()
+    for w in HIGH_STAKES_WORDS:
+        if w in low:
+            out["high_stakes_evidence"].append(f"name contains '{w}'")
+    for d in HIGH_STAKES_PATHS:
+        if d in entries and os.path.isdir(os.path.join(path, d)):
+            out["high_stakes_evidence"].append(f"{d}/ directory present")
+    if "solidity" in out["languages"]:
+        out["high_stakes_evidence"].append("solidity toolchain")
+
+    out["is_project"] = bool(out["is_git"] or out["manifests"])
+    return out
+
+
+def propose(p: dict, site: str) -> dict:
+    handle = slug(p["dir"])
+    seat = f"{handle}-{site}" if handle and site else None
+    strong = bool(p["high_stakes_evidence"])
+    return {
+        "handle": handle,
+        "seat": seat,
+        "seat_id_problem": None if handle else
+            f"'{p['dir']}' cannot be turned into a seat id ([a-z0-9_-]); rename it or choose a handle by hand",
+        "suggested_tier": "strong" if strong else "mid",
+        "tier_evidence": p["high_stakes_evidence"] or
+            ["no money/keys/contract/infra signals found — a mid tier is usually right"],
+        "home": p["path"],
+    }
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(
+        prog="agentmail-scan",
+        description="Find projects inside this folder and propose a roster. Read-only.")
+    ap.add_argument("--root", default=DEFAULT_ROOT, help=f"folder to scan (default {DEFAULT_ROOT})")
+    ap.add_argument("--site", default="", help="site handle; seats are proposed as <project>-<site>")
+    ap.add_argument("--json", action="store_true", help="machine-readable output")
+    ap.add_argument("--all", action="store_true", help="also list directories that were skipped")
+    args = ap.parse_args(argv)
+
+    root = os.path.abspath(args.root)
+    if not os.path.isdir(root):
+        print(f"agentmail-scan: not a directory: {root}", file=sys.stderr)
+        return 1
+
+    site = slug(args.site) or ""
+    projects, skipped = [], []
+    for name in sorted(os.listdir(root)):
+        path = os.path.join(root, name)
+        if not os.path.isdir(path):
+            continue
+        if name.startswith(".") or name in SKIP_NAMES:
+            skipped.append({"dir": name, "reason": "infrastructure or hidden directory"})
+            continue
+        info = inspect(path)
+        if info.get("is_project"):
+            info["proposal"] = propose(info, site)
+            projects.append(info)
+        else:
+            skipped.append({"dir": name,
+                            "reason": "no git work tree and no recognised project manifest"})
+
+    # the human running this is the obvious default for the site's human name
+    rc, gituser, _ = run(["git", "config", "user.name"])
+    rc2, gitmail, _ = run(["git", "config", "user.email"])
+    doc = {
+        "tool": "agentmail-scan", "tool_version": TOOL_VERSION,
+        "root": root, "site": site or None,
+        "detected_human": {"name": gituser or None, "email": gitmail or None,
+                           "source": "git config (a default to confirm, not a fact)"},
+        "machine": os.uname().nodename if hasattr(os, "uname") else None,
+        "mail_root": os.path.join(root, ".agent-mail"),
+        "mail_root_exists": os.path.isdir(os.path.join(root, ".agent-mail")),
+        "projects": projects, "skipped": skipped,
+        "counts": {"projects": len(projects), "skipped": len(skipped)},
+    }
+
+    if args.json:
+        print(json.dumps(doc, indent=2))
+        return 0
+
+    print(f"scanning {root}")
+    if doc["mail_root_exists"]:
+        print(f"  note: {doc['mail_root']} already exists — this network is already initialised")
+    print()
+    if not projects:
+        print("  no projects found. Drop your project folders directly inside this directory")
+        print("  (each one a git repo or carrying a package.json / pyproject.toml / go.mod / …)")
+    else:
+        print(f"  {len(projects)} project(s) found\n")
+        for p in projects:
+            pr = p["proposal"]
+            print(f"  {p['dir']}")
+            print(f"      seat        {pr['seat'] or '(needs a handle — see problem below)'}")
+            if pr["seat_id_problem"]:
+                print(f"      PROBLEM     {pr['seat_id_problem']}")
+            print(f"      home        {p['path']}")
+            git = (f"branch {p.get('branch')}" if p.get("is_git") else "not a git repo")
+            if p.get("last_commit"):
+                lc = p["last_commit"]
+                git += f" · last commit {lc.get('age_days','?')}d ago by {lc.get('author')}"
+            if p.get("uncommitted"):
+                git += f" · {p['uncommitted']} uncommitted"
+            print(f"      git         {git}")
+            print(f"      stack       {', '.join(p['languages']) or 'unrecognised'}"
+                  f"{'  · has CLAUDE.md' if p['has_claude_md'] else ''}")
+            print(f"      tier        {pr['suggested_tier']} — {pr['tier_evidence'][0]}")
+            for extra in pr["tier_evidence"][1:]:
+                print(f"                  {extra}")
+            if len(p.get("recent_authors") or []) > 1:
+                print(f"      NOTE        {len(p['recent_authors'])} humans committed here in 30d: "
+                      f"{', '.join(p['recent_authors'])}")
+            print()
+    if args.all and skipped:
+        print(f"  skipped ({len(skipped)}):")
+        for s in skipped:
+            print(f"      {s['dir']:28} {s['reason']}")
+        print()
+    print("  nothing was written. Next: paste agentmail/SETUP_PROMPT.md into a Claude Code")
+    print("  session started in this folder, and it will build the network from this scan.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

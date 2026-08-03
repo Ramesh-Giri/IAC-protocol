@@ -1,0 +1,40 @@
+{
+  "_comment": [
+    "Copy to <org root>/.agent-mail/roster.json and fill in. This file is the",
+    "single source of identity for the whole network: the dashboard reads the",
+    "human's name, the site, the seats and the projects from here and hardcodes",
+    "none of them. Absolute paths only — a relative 'home' silently produces a",
+    "seat that never matches its own process.",
+    "Delete this _comment key; JSON has no comments and every reader ignores it,",
+    "but it will show up in your dashboard's raw view."
+  ],
+  "version": 1,
+  "roster_owner": "overseer-SITE",
+  "sites": {
+    "SITE": {
+      "sync": "none",
+      "machine": "HOSTNAME",
+      "human": "YOUR FULL NAME"
+    }
+  },
+  "agents": {
+    "overseer-SITE": {
+      "role": "parent",
+      "site": "SITE",
+      "project": null,
+      "model": "STRONGEST MODEL AVAILABLE TO YOU",
+      "runtime": "claude-code",
+      "home": "/absolute/path/to/org/root",
+      "description": "supervising agent — user-facing, permission-prompted, owns no repo"
+    },
+    "PROJECT-SITE": {
+      "role": "child",
+      "site": "SITE",
+      "project": "PROJECT",
+      "model": "TIER MODEL FOR THIS REPO",
+      "runtime": "claude-code",
+      "home": "/absolute/path/to/org/root/PROJECT",
+      "description": "one line: what this repo is, and what it can break"
+    }
+  }
+}

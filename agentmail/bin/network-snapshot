@@ -1,0 +1,1481 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+network-snapshot — one JSON document describing the complete live state of an
+AgentMail network (SPEC.md v1). Read-only: it never writes, moves, or deletes
+anything. Python 3 standard library only.
+
+    network-snapshot [--pretty] [--mail-root DIR] [--hours N] [--max-mail N]
+
+Exit code is 0 whenever a document was produced. Anything that could not be
+determined is reported inside the document (meta.warnings[]) rather than by
+crashing or by an exit code — a dashboard must always get a parseable body.
+
+=============================================================================
+TOP-LEVEL SHAPE
+=============================================================================
+{
+  "meta":       {...},   generation info, counters, warnings, rule documentation
+  "seats":      [...],   one per roster agent, roster fields + computed state
+  "repos":      [...],   one per seat that owns a project directory
+  "mail_flow":  [...],   every message in the last N hours (default 48), chrono
+  "threads":    [...],   mail grouped by `thread:` header (all time)
+  "bridges":    [...],   mail-bridge / mail-watch / mail-sync helper processes
+  "board":      {...},   structured + raw parse of overseer-tasks.md
+  "federation": {...}    other sites, mail-repo remote state, contributors
+}
+
+=============================================================================
+DERIVED FIELDS — how every non-obvious value is computed
+=============================================================================
+
+SEATS
+  role/project/model/runtime/home/description
+      Verbatim from roster.json. `home_exists` is a stat() of `home`.
+
+  session.live
+      True when a process believed to BE that seat's agent session is running.
+      Detection is runtime-aware and evidence-ranked (strongest first):
+
+      (a) "watcher-ancestry"  — a `mail-watch <seat>` (or `mail-bridge <seat>`)
+          process is running; we walk its parent chain and the first ancestor
+          that looks like an agent process is that seat's session. This is the
+          strongest signal available: the watcher names the seat explicitly, so
+          the link is not a guess. A pid claimed this way is not offered to any
+          other seat.
+      (b) "cwd-match" — for runtime=claude-code seats only, an unclaimed Claude
+          Code process whose *current working directory* equals the seat's
+          `home` (resolved through symlinks). cwd comes from
+          `lsof -a -p <pids> -d cwd -Fpn`, not from the command line.
+      (c) "bridge" — for non-claude runtimes (e.g. codex-cli, which has no
+          persistent session: the bridge invokes the CLI per message) the seat
+          counts as live iff its `mail-bridge <seat>` process is running.
+
+      Watcher-ancestry is additionally rejected when the ancestor's cwd is
+      known and is NOT the seat's home (i.e. someone else's session started
+      that seat's watcher); the rejection is reported in meta.warnings.
+
+      A process is an "agent process" candidate when argv[0] is `claude`, or is
+      under `.../claude/versions/<v>`, or is the ClaudeCode.app binary, or is a
+      `codex*` binary — MINUS infrastructure processes that are not sessions:
+      `claude daemon run`, `--bg-pty-host`, `bg-pty-host`, `bg-spare`,
+      `--bg-spare`, `mcp-server`. cwd-matching only ever considers the claude
+      family, because the council bridge runs `codex exec -C <dir>` transiently
+      in the very directory the parent overseer occupies.
+      Candidates are further classified:
+        kind=interactive        plain session (optionally with a launch prompt)
+        kind=forked-background  carries --fork-session / --resume / --bg-*;
+                                a resumed/background session sharing the cwd
+      When several candidates share one cwd, the primary is chosen by:
+      watcher-ancestry > interactive > has --dangerously-skip-permissions >
+      longest uptime. Every candidate is still listed under
+      `session.candidates[]` so a reader can second-guess the choice.
+
+  session.dangerously_skip_permissions
+      True iff `--dangerously-skip-permissions` appears in that pid's argv.
+      `session.model_flag` / `permission_mode` are likewise read from argv:
+      they are what the process was LAUNCHED with, which can differ from
+      roster.model (roster = intent, argv = reality). `elapsed_seconds` is from
+      `ps -o etime`; `started_at` is generated_at minus elapsed (±1s).
+
+  inbox_unread / inbox_processed
+      Count of `*.md` files in <seat>/new/ and <seat>/cur/. Non-.md files
+      (e.g. the `.keep` placeholders) are ignored, `tmp/` is never read
+      (SPEC §2: readers MUST ignore it).
+
+  mail_received_total / last_received_at
+      Messages sitting in this seat's own maildir (new/ + cur/). The maildir
+      owner is treated as the authoritative recipient, not the `to:` header
+      (the header can lie; the directory cannot). `to_header_mismatches`
+      counts messages where they disagree.
+
+  mail_sent_total / last_sent_at
+      Every message across ALL seats' maildirs whose `from:` header equals this
+      seat id. There are no outboxes in AgentMail (SPEC §2), so sent mail can
+      only be found by scanning recipients. Mail sent to a seat outside this
+      roster, or already archived/deleted from cur/, is therefore invisible.
+
+  message timestamps
+      `sent:` header parsed as ISO-8601 Z when present and well formed;
+      otherwise the UTC timestamp encoded in the filename (SPEC §4). Which one
+      was used is recorded per message as `timestamp_source`.
+
+  activity  (state machine — see also meta.activity_rules in the output)
+      UNREACHABLE  home path missing/unreadable, or the seat's evidence could
+                   not be gathered (git failed, ps failed). Nothing is claimed.
+      DARK         no live session process found.
+      LIVE_BUSY    session live AND a recent-work signal fired:
+                     * repo has >0 uncommitted files, OR
+                     * HEAD commit is younger than BUSY_WINDOW (600 s)
+      LIVE_IDLE    session live, no recent-work signal.
+      DOCUMENTED DEVIATION: seats with no project repo (the parent overseer and
+      council seats) have no repo evidence at all and would be permanently
+      LIVE_IDLE. For those seats only, the busy signal is substituted with
+      "sent a message in the last BUSY_WINDOW seconds", and for bridged council
+      seats additionally "bridge.log modified in the last BUSY_WINDOW seconds".
+      `activity_evidence[]` always lists exactly which signals fired, and
+      `activity_confidence` is high for repo-backed seats, medium for the
+      substituted signals. Note the honest limits: uncommitted files prove that
+      work exists, NOT that the session is producing it right now; an idle
+      session in a dirty tree reads as LIVE_BUSY.
+
+REPOS
+      One entry per seat whose `home` is a git work tree. branch/ahead/behind
+      come from the porcelain v1 `-b` header (`## a...b [ahead N, behind M]`);
+      ahead/behind are null when the branch has no upstream. `uncommitted`
+      counts porcelain lines and splits them into staged / unstaged /
+      untracked (untracked at default -unormal: a directory counts once).
+      `last_commits` is `git log -5`, ages are git's own relative format.
+      Non-git homes get `is_git: false` and no git fields — never an error.
+
+MAIL_FLOW
+      Every message whose timestamp is within --hours (default 48) of now,
+      across all seats' new/ + cur/, sorted oldest→newest. `unread` is
+      "the file is in new/". Capped at --max-mail (default 300) MOST RECENT;
+      truncation is announced in meta.warnings and meta.counts.
+
+THREADS
+      All mail (not just the window) grouped by `thread:` header. Messages with
+      no thread header are grouped into a single synthetic entry
+      (thread=null, synthetic=true) so nothing is silently dropped.
+      `participants` = every `from:` plus every maildir owner in the group.
+      A broadcast is N files carrying ONE timestamp (SPEC §5: fan-out is the
+      sender's cost), so "the last message" is every copy sharing the newest
+      timestamp (`last_message_copies`). `reply_owed_by` is the LIST of seats
+      holding such a copy still in new/ — they have not even read it yet;
+      `last_message_unread` is true when that list is non-empty.
+
+BRIDGES
+      Every mail-bridge / mail-watch / mail-sync / legacy watch-inbox.sh
+      process. A helper is only recognised when the argv actually EXECUTES the
+      script (a path token whose basename is the script name) — a watchdog
+      running `pgrep -f "mail-bridge codex"`, or echoing the name, is NOT a
+      bridge, and was miscounted as one before this rule. Each real helper
+      usually appears twice (the `zsh -c` wrapper the agent's Bash tool
+      spawned, and the real `bash <script>`); entries are de-duplicated per
+      (kind, target), `pid`/`uptime` describe the longest-running non-wrapper
+      process, `processes[]` lists them all and `instance_count` says how many
+      genuine copies are running (>1 means duplicate watchers).
+      `log` reports <mail-root>/<target>/bridge.log size and mtime when
+      present — for a bridged council seat that mtime is the best available
+      proxy for "when did it last actually answer".
+
+BOARD
+      overseer-tasks.md is markdown, not a schema: `## ` starts a section and
+      `- ` starts an item, with pipe-separated fields by convention
+      ("- agent | task | state | notes") that is NOT reliably followed. Each
+      item therefore carries `raw` (verbatim), `fields` (split on `|`), and a
+      best-effort `agent`/`task`/`state`/`notes` mapping that is only filled
+      when field 0 resolves to a roster seat id. `board.raw` is the whole file.
+
+FEDERATION
+      `sites` from roster.json (`is_local` = the site owning the parent seat).
+      `remote_sites` is sites other than local — the "other universes".
+      `mail_repo` answers "is a remote actually configured": .agent-mail's git
+      remotes, branch, last commit, uncommitted count. An empty `remotes` list
+      means federation is documented but NOT wired up. `sync_daemon_running`
+      is a live mail-sync process.
+      `contributors` are distinct git authors across all repos in the last 30
+      days with commit counts, per-repo breakdown and last-seen date;
+      `external_contributors` excludes identities matching the local human
+      (name/email containing the site's human name, or the site domain) —
+      those are humans working in the same repos WITHOUT a seat in this mail
+      network, which is exactly the blind spot federation exists to close.
+      Identity matching is by raw author string: one human using two emails
+      appears twice unless the strings match.
+
+CAVEATS A CONSUMER SHOULD KNOW
+  * Everything is a point-in-time sample of a live system; two fields read
+    milliseconds apart can disagree (mail can arrive mid-scan).
+  * "session live" proves a PROCESS exists, never that a model is thinking.
+  * Deleted/archived mail (SPEC §3.4) is gone from these counts by design.
+"""
+
+from __future__ import annotations
+
+import argparse
+import concurrent.futures as futures
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+from datetime import datetime, timedelta, timezone
+
+TOOL_VERSION = "1.0.0"
+
+# ---- tunables (documented in meta.activity_rules) --------------------------
+BUSY_WINDOW_SECONDS = 600          # "recent" commit / mail / bridge activity
+DEFAULT_MAIL_WINDOW_HOURS = 48
+DEFAULT_MAIL_CAP = 300
+CONTRIBUTOR_WINDOW_DAYS = 30
+SUBPROCESS_TIMEOUT = 8             # seconds, per external command
+HEADER_READ_BYTES = 4096           # frontmatter is tiny; never read whole bodies
+
+WARNINGS: list[str] = []
+
+
+def warn(msg: str) -> None:
+    if msg not in WARNINGS:
+        WARNINGS.append(msg)
+
+
+# ---------------------------------------------------------------------------
+# small helpers
+# ---------------------------------------------------------------------------
+
+def run(cmd: list[str], cwd: str | None = None, timeout: int = SUBPROCESS_TIMEOUT) -> tuple[int, str, str]:
+    """Run a command, never raise. Returns (rc, stdout, stderr); rc=-1 on failure."""
+    try:
+        p = subprocess.run(
+            cmd, cwd=cwd, capture_output=True, text=True,
+            timeout=timeout, errors="replace",
+        )
+        return p.returncode, p.stdout, p.stderr
+    except subprocess.TimeoutExpired:
+        warn(f"timeout after {timeout}s: {' '.join(cmd[:4])}...")
+        return -1, "", "timeout"
+    except (OSError, ValueError) as exc:
+        warn(f"failed to run {cmd[0]}: {exc}")
+        return -1, "", str(exc)
+
+
+def iso(ts: float | None) -> str | None:
+    if ts is None:
+        return None
+    try:
+        return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+def human_duration(seconds: float | None) -> str | None:
+    if seconds is None:
+        return None
+    s = int(seconds)
+    if s < 60:
+        return f"{s}s"
+    if s < 3600:
+        return f"{s // 60}m {s % 60}s"
+    if s < 86400:
+        return f"{s // 3600}h {(s % 3600) // 60}m"
+    return f"{s // 86400}d {(s % 86400) // 3600}h"
+
+
+def realpath(p: str | None) -> str | None:
+    if not p:
+        return None
+    try:
+        return os.path.realpath(p)
+    except OSError:
+        return p
+
+
+# ---------------------------------------------------------------------------
+# process table
+# ---------------------------------------------------------------------------
+
+ETIME_RE = re.compile(r"^(?:(?:(\d+)-)?(\d+):)?(\d+):(\d+)$")
+
+AGENT_EXCLUDE_TOKENS = (
+    "--bg-pty-host", "bg-pty-host", "--bg-spare", "bg-spare",
+    "daemon", "mcp-server", "--mcp-server",
+)
+BACKGROUND_TOKENS = ("--fork-session", "--resume", "--reply-on-resume", "--bg-")
+
+
+def parse_etime(text: str) -> int | None:
+    m = ETIME_RE.match(text.strip())
+    if not m:
+        return None
+    days, hours, mins, secs = m.groups()
+    return (int(days or 0) * 86400 + int(hours or 0) * 3600
+            + int(mins) * 60 + int(secs))
+
+
+def process_table() -> dict[int, dict]:
+    """pid -> {pid, ppid, elapsed_seconds, command}. Empty dict on failure."""
+    rc, out, err = run(["ps", "-ww", "-eo", "pid=,ppid=,etime=,command="])
+    if rc != 0 or not out.strip():
+        warn(f"could not read the process table (ps rc={rc}: {err.strip()[:120]}); "
+             "all session/bridge detection is unavailable")
+        return {}
+    table: dict[int, dict] = {}
+    for line in out.splitlines():
+        parts = line.strip().split(None, 3)
+        if len(parts) < 4:
+            continue
+        try:
+            pid, ppid = int(parts[0]), int(parts[1])
+        except ValueError:
+            continue
+        table[pid] = {
+            "pid": pid,
+            "ppid": ppid,
+            "elapsed_seconds": parse_etime(parts[2]),
+            "command": parts[3],
+        }
+    return table
+
+
+def is_agent_candidate(command: str) -> bool:
+    """Does this argv look like an agent SESSION (not agent infrastructure)?"""
+    if not command:
+        return False
+    argv0 = command.split(None, 1)[0]
+    base = os.path.basename(argv0)
+    looks_like = (
+        base == "claude"
+        or "/claude/versions/" in argv0
+        or "ClaudeCode.app" in argv0
+        or base.startswith("codex")
+    )
+    if not looks_like:
+        return False
+    tail = command.split(None, 1)[1] if " " in command else ""
+    tokens = tail.split()
+    if tokens and tokens[0] in ("daemon", "bg-pty-host", "bg-spare", "mcp"):
+        return False
+    for bad in AGENT_EXCLUDE_TOKENS:
+        if bad in tokens:
+            return False
+    if "--bg-pty-host" in command or "--bg-spare" in command:
+        return False
+    return True
+
+
+def cwd_map(pids: list[int]) -> dict[int, str]:
+    """pid -> cwd, via one lsof call. Missing pids simply do not appear."""
+    if not pids:
+        return {}
+    if not shutil.which("lsof"):
+        warn("lsof not found — session cwd matching unavailable")
+        return {}
+    rc, out, _ = run(["lsof", "-a", "-p", ",".join(str(p) for p in pids),
+                      "-d", "cwd", "-Fpn"], timeout=SUBPROCESS_TIMEOUT + 4)
+    if rc not in (0, 1) or not out:
+        warn("lsof returned no usable output — session cwd matching degraded")
+        return {}
+    result: dict[int, str] = {}
+    cur = None
+    for line in out.splitlines():
+        if line.startswith("p"):
+            try:
+                cur = int(line[1:])
+            except ValueError:
+                cur = None
+        elif line.startswith("n") and cur is not None:
+            result.setdefault(cur, line[1:])
+    return result
+
+
+def argv_flags(command: str) -> dict:
+    tokens = command.split()
+    out = {
+        "dangerously_skip_permissions": "--dangerously-skip-permissions" in tokens,
+        "model_flag": None,
+        "permission_mode": None,
+        "session_id": None,
+        "launch_prompt": None,
+    }
+    for i, t in enumerate(tokens):
+        if t == "--model" and i + 1 < len(tokens):
+            out["model_flag"] = tokens[i + 1]
+        elif t.startswith("--model="):
+            out["model_flag"] = t.split("=", 1)[1]
+        elif t == "--permission-mode" and i + 1 < len(tokens):
+            out["permission_mode"] = tokens[i + 1]
+        elif t == "--session-id" and i + 1 < len(tokens):
+            out["session_id"] = tokens[i + 1]
+    # trailing non-flag words after the last flag-ish token = the launch prompt
+    prompt_words: list[str] = []
+    for t in reversed(tokens[1:]):
+        if t.startswith("-"):
+            break
+        prompt_words.append(t)
+    if len(prompt_words) >= 3:
+        out["launch_prompt"] = " ".join(reversed(prompt_words))[:200]
+    return out
+
+
+def candidate_kind(command: str) -> str:
+    return "forked-background" if any(t in command for t in BACKGROUND_TOKENS) else "interactive"
+
+
+def candidate_family(command: str) -> str:
+    """Which CLI is this? cwd-matching must not hand a codex process to a
+    claude-code seat — the bridge invokes `codex exec -C <dir>` transiently in
+    the very directory the parent overseer sits in."""
+    argv0 = command.split(None, 1)[0]
+    base = os.path.basename(argv0)
+    if base.startswith("codex"):
+        return "codex"
+    return "claude"
+
+
+def ancestors(pid: int, table: dict[int, dict], limit: int = 12) -> list[int]:
+    out, seen, cur = [], set(), pid
+    while limit > 0:
+        proc = table.get(cur)
+        if not proc:
+            break
+        parent = proc["ppid"]
+        if parent in seen or parent <= 1:
+            break
+        seen.add(parent)
+        out.append(parent)
+        cur = parent
+        limit -= 1
+    return out
+
+
+# ---------------------------------------------------------------------------
+# helper (watcher / bridge / sync) process discovery
+# ---------------------------------------------------------------------------
+
+HELPER_SCRIPTS = ("mail-bridge", "mail-watch", "mail-sync")
+LEGACY_WATCH_RE = re.compile(r"watch-inbox\.sh\s+\S*?([A-Za-z0-9_.-]+)-inbox\.md")
+QUOTE_CHARS = "'\"`"
+
+
+def _helper_invocation(cmd: str) -> tuple[str, str | None] | None:
+    """Return (kind, target) iff this argv actually EXECUTES a helper script.
+
+    The token must be a PATH whose basename is the script name — that is what
+    separates a real invocation from a process that merely mentions the name
+    (a `pgrep -f "mail-bridge codex"` liveness monitor, an echo in a watchdog
+    loop). Both of those exist in the wild here and used to be counted.
+    """
+    tokens = cmd.split()
+    for i, raw in enumerate(tokens):
+        tok = raw.lstrip(QUOTE_CHARS)
+        if "/" not in tok:
+            continue
+        base = os.path.basename(tok)
+        if base not in HELPER_SCRIPTS:
+            continue
+        # first positional argument after the script path is the seat id
+        # (flags may precede it: `mail-bridge -d DIR <seat> -- cmd...`)
+        target = None
+        rest = [t.strip(QUOTE_CHARS) for t in tokens[i + 1:]]
+        skip_next = False
+        for cand in rest:
+            if skip_next:
+                skip_next = False
+                continue
+            if cand == "--":
+                break
+            if cand.startswith("-"):
+                skip_next = cand in ("-d", "-i")
+                continue
+            if re.fullmatch(r"[A-Za-z0-9_.-]+", cand):
+                target = cand
+            break
+        return base, target
+    return None
+
+
+def find_helpers(table: dict[int, dict]) -> list[dict]:
+    helpers = []
+    for proc in table.values():
+        cmd = proc["command"]
+        if "network-snapshot" in cmd:
+            continue
+        wrapper = bool(re.match(r"^/\S*/(?:ba|z|k)?sh\s+-c\b", cmd))
+        hit = _helper_invocation(cmd)
+        if hit:
+            helpers.append({"kind": hit[0], "target": hit[1],
+                            "proc": proc, "wrapper": wrapper})
+            continue
+        m = LEGACY_WATCH_RE.search(cmd)
+        if m and "watch-inbox.sh" in cmd:
+            helpers.append({"kind": "legacy-inbox-watch", "target": m.group(1),
+                            "proc": proc, "wrapper": wrapper})
+    return helpers
+
+
+# ---------------------------------------------------------------------------
+# mail scanning
+# ---------------------------------------------------------------------------
+
+FILENAME_TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})Z")
+HEADER_RE = re.compile(r"^([A-Za-z0-9_-]+):\s*(.*)$")
+
+
+def parse_iso_z(text: str) -> float | None:
+    text = (text or "").strip()
+    if not text:
+        return None
+    candidate = text.replace("Z", "+00:00")
+    try:
+        dt = datetime.fromisoformat(candidate)
+    except ValueError:
+        for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+            try:
+                dt = datetime.strptime(text, fmt)
+                break
+            except ValueError:
+                continue
+        else:
+            return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.timestamp()
+
+
+def ts_from_filename(name: str) -> float | None:
+    m = FILENAME_TS_RE.match(name)
+    if not m:
+        return None
+    return parse_iso_z(f"{m.group(1)}T{m.group(2)}:{m.group(3)}:{m.group(4)}Z")
+
+
+def read_headers(path: str) -> dict[str, str]:
+    """Tolerant YAML-ish frontmatter reader. Never raises."""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            head = fh.read(HEADER_READ_BYTES)
+    except OSError as exc:
+        warn(f"unreadable message {os.path.basename(path)}: {exc}")
+        return {}
+    lines = head.splitlines()
+    if lines and lines[0].strip() == "---":
+        lines = lines[1:]
+        block = []
+        for line in lines:
+            if line.strip() == "---":
+                break
+            block.append(line)
+    else:
+        block = lines[:25]          # malformed / missing fence: best effort
+    fields: dict[str, str] = {}
+    for line in block:
+        m = HEADER_RE.match(line)
+        if m and m.group(1).lower() not in fields:
+            fields[m.group(1).lower()] = m.group(2).strip()
+    return fields
+
+
+def scan_mail(mail_root: str, seat_ids: list[str]) -> list[dict]:
+    """Every message in every maildir. tmp/ is never read (SPEC §2)."""
+    messages: list[dict] = []
+    try:
+        dir_entries = sorted(os.listdir(mail_root))
+    except OSError as exc:
+        warn(f"cannot list mail root {mail_root}: {exc}")
+        return messages
+    owners = [d for d in dir_entries
+              if os.path.isdir(os.path.join(mail_root, d))
+              and d not in ("archive", "bin", ".git")]
+    for owner in owners:
+        if owner not in seat_ids:
+            warn(f"maildir '{owner}' exists but is not in roster.json — "
+                 "its mail is included, the seat is not")
+        for box, unread in (("new", True), ("cur", False)):
+            box_dir = os.path.join(mail_root, owner, box)
+            if not os.path.isdir(box_dir):
+                continue
+            try:
+                names = os.listdir(box_dir)
+            except OSError as exc:
+                warn(f"cannot list {owner}/{box}: {exc}")
+                continue
+            for name in names:
+                if not name.endswith(".md"):
+                    continue          # .keep placeholders and friends
+                path = os.path.join(box_dir, name)
+                fields = read_headers(path)
+                ts = parse_iso_z(fields.get("sent", ""))
+                source = "sent-header"
+                if ts is None:
+                    ts = ts_from_filename(name)
+                    source = "filename"
+                if ts is None:
+                    source = "unknown"
+                    warn(f"no usable timestamp for {owner}/{box}/{name}")
+                try:
+                    size = os.path.getsize(path)
+                except OSError:
+                    size = None
+                messages.append({
+                    "file": name,
+                    "path": path,
+                    "mailbox_owner": owner,
+                    "unread": unread,
+                    "timestamp": iso(ts),
+                    "timestamp_epoch": ts,
+                    "timestamp_source": source,
+                    "from": fields.get("from"),
+                    "to_header": fields.get("to"),
+                    "subject": fields.get("subject"),
+                    "type": fields.get("type") or "info",   # SPEC §6: default
+                    "thread": fields.get("thread") or None,
+                    "ack": fields.get("ack"),
+                    "size_bytes": size,
+                })
+    # deterministic order: broadcasts fan out with identical `sent:` seconds,
+    # so ties are broken by mailbox owner + filename rather than by listdir()
+    messages.sort(key=lambda m: (m["timestamp_epoch"] is None,
+                                 m["timestamp_epoch"] or 0,
+                                 m["mailbox_owner"], m["file"]))
+    return messages
+
+
+# ---------------------------------------------------------------------------
+# git
+# ---------------------------------------------------------------------------
+
+PORCELAIN_BRANCH_RE = re.compile(
+    r"^## (?P<branch>[^ .]+(?:\.[^ .]+)*?)(?:\.\.\.(?P<upstream>\S+))?"
+    r"(?: \[(?P<track>[^\]]+)\])?$"
+)
+UNIT = "\x1f"
+
+
+def git_state(path: str) -> dict:
+    info: dict = {"path": path, "is_git": False}
+    if not os.path.isdir(path):
+        info["error"] = "path does not exist"
+        return info
+    rc, out, _ = run(["git", "-C", path, "rev-parse", "--is-inside-work-tree"])
+    if rc != 0 or out.strip() != "true":
+        info["error"] = "not a git work tree"
+        return info
+    info["is_git"] = True
+
+    rc, out, err = run(["git", "-C", path, "status", "--porcelain=v1", "-b"])
+    if rc == 0:
+        lines = out.splitlines()
+        staged = unstaged = untracked = 0
+        for line in lines[1:]:
+            if line.startswith("??"):
+                untracked += 1
+                continue
+            if len(line) >= 2:
+                if line[0] not in " ?":
+                    staged += 1
+                if line[1] not in " ?":
+                    unstaged += 1
+        info["uncommitted_files"] = max(0, len(lines) - 1)
+        info["uncommitted_breakdown"] = {
+            "staged": staged, "unstaged": unstaged, "untracked": untracked,
+        }
+        info["branch"] = None
+        info["upstream"] = None
+        info["ahead"] = None
+        info["behind"] = None
+        if lines:
+            header = lines[0]
+            if header.startswith("## HEAD (no branch)"):
+                info["branch"] = "HEAD"
+                info["detached"] = True
+            else:
+                m = PORCELAIN_BRANCH_RE.match(header)
+                if m:
+                    info["branch"] = m.group("branch")
+                    info["upstream"] = m.group("upstream")
+                    track = m.group("track") or ""
+                    a = re.search(r"ahead (\d+)", track)
+                    b = re.search(r"behind (\d+)", track)
+                    if m.group("upstream"):
+                        info["ahead"] = int(a.group(1)) if a else 0
+                        info["behind"] = int(b.group(1)) if b else 0
+                info.setdefault("detached", False)
+    else:
+        warn(f"git status failed in {path}: {err.strip()[:120]}")
+        info["uncommitted_files"] = None
+
+    fmt = UNIT.join(["%h", "%H", "%cr", "%ct", "%s", "%an", "%ae"])
+    rc, out, _ = run(["git", "-C", path, "log", "-5", f"--format={fmt}"])
+    commits = []
+    if rc == 0:
+        for line in out.splitlines():
+            parts = line.split(UNIT)
+            if len(parts) != 7:
+                continue
+            commits.append({
+                "sha": parts[0], "sha_full": parts[1], "age_relative": parts[2],
+                "committed_at": iso(int(parts[3])) if parts[3].isdigit() else None,
+                "committed_at_epoch": int(parts[3]) if parts[3].isdigit() else None,
+                "subject": parts[4], "author": parts[5], "author_email": parts[6],
+            })
+    info["last_commits"] = commits
+    info["head"] = commits[0] if commits else None
+    if commits and commits[0]["committed_at_epoch"]:
+        info["head_age_seconds"] = max(0, int(time.time()) - commits[0]["committed_at_epoch"])
+    else:
+        info["head_age_seconds"] = None
+
+    rc, out, _ = run(["git", "-C", path, "remote", "-v"])
+    remotes: dict[str, dict] = {}
+    if rc == 0:
+        for line in out.splitlines():
+            bits = line.split()
+            if len(bits) >= 3:
+                name, url, kind = bits[0], bits[1], bits[2].strip("()")
+                remotes.setdefault(name, {})[kind] = url
+    info["remotes"] = [{"name": k, **v} for k, v in remotes.items()]
+
+    fmt2 = UNIT.join(["%an", "%ae", "%ct"])
+    rc, out, _ = run(["git", "-C", path, "log",
+                      f"--since={CONTRIBUTOR_WINDOW_DAYS}.days", f"--format={fmt2}"])
+    authors: dict[tuple[str, str], dict] = {}
+    if rc == 0:
+        for line in out.splitlines():
+            parts = line.split(UNIT)
+            if len(parts) != 3:
+                continue
+            key = (parts[0], parts[1])
+            rec = authors.setdefault(key, {"name": parts[0], "email": parts[1],
+                                           "commits": 0, "last_commit_epoch": 0})
+            rec["commits"] += 1
+            if parts[2].isdigit():
+                rec["last_commit_epoch"] = max(rec["last_commit_epoch"], int(parts[2]))
+    info["recent_authors"] = sorted(authors.values(), key=lambda a: -a["commits"])
+    return info
+
+
+# ---------------------------------------------------------------------------
+# board
+# ---------------------------------------------------------------------------
+
+def parse_board(path: str, seat_ids: set[str]) -> dict:
+    board = {"path": path, "exists": False, "title": None,
+             "sections": [], "items": [], "raw": None}
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+    except OSError as exc:
+        warn(f"task board unreadable at {path}: {exc}")
+        board["error"] = str(exc)
+        return board
+    board["exists"] = True
+    board["raw"] = text
+    section = None
+    section_names: list[str] = []
+    for n, line in enumerate(text.splitlines(), 1):
+        stripped = line.strip()
+        if stripped.startswith("# ") and board["title"] is None:
+            board["title"] = stripped[2:].strip()
+            continue
+        if stripped.startswith("## "):
+            section = stripped[3:].strip()
+            section_names.append(section)
+            continue
+        if not (stripped.startswith("- ") or stripped.startswith("* ")):
+            continue
+        body = stripped[2:].strip()
+        if not body:
+            continue
+        fields = [f.strip() for f in body.split("|")]
+        item = {
+            "line": n, "section": section, "raw": body, "fields": fields,
+            "agent": None, "task": None, "state": None, "notes": None,
+        }
+        first = fields[0]
+        agent = None
+        if first in seat_ids:
+            agent = first
+        else:
+            for sid in seat_ids:                    # tolerate bare short names
+                short = sid.rsplit("-", 1)[0]
+                if first == sid or first == short:
+                    agent = sid
+                    break
+        if agent:
+            item["agent"] = agent
+            item["task"] = fields[1] if len(fields) > 1 else None
+            item["state"] = fields[2] if len(fields) > 2 else None
+            item["notes"] = " | ".join(fields[3:]) if len(fields) > 3 else None
+        else:
+            item["task"] = fields[0]
+            item["notes"] = " | ".join(fields[1:]) if len(fields) > 1 else None
+        board["items"].append(item)
+    board["sections"] = [
+        {"name": name,
+         "item_count": sum(1 for i in board["items"] if i["section"] == name)}
+        for name in section_names
+    ]
+    board["parse_note"] = (
+        "'agent' is set only when the first pipe-field resolves to a roster "
+        "seat id; otherwise the line is a free-form item and 'task'/'notes' "
+        "hold the split fields. 'raw' and board.raw are authoritative."
+    )
+    return board
+
+
+# ---------------------------------------------------------------------------
+# main assembly
+# ---------------------------------------------------------------------------
+
+def build(args) -> dict:
+    t0 = time.time()
+    now = time.time()
+    mail_root = os.path.abspath(args.mail_root)
+    repo_root = os.path.dirname(mail_root)
+
+    # -- roster -------------------------------------------------------------
+    roster_path = os.path.join(mail_root, "roster.json")
+    roster: dict = {}
+    try:
+        with open(roster_path, "r", encoding="utf-8") as fh:
+            roster = json.load(fh)
+    except (OSError, ValueError) as exc:
+        warn(f"roster.json unusable ({exc}) — seat list will be empty")
+    agents: dict = roster.get("agents", {}) if isinstance(roster, dict) else {}
+    sites: dict = roster.get("sites", {}) if isinstance(roster, dict) else {}
+    seat_ids = list(agents.keys())
+    seat_id_set = set(seat_ids)
+
+    # -- processes ----------------------------------------------------------
+    table = process_table()
+    helpers = find_helpers(table)
+    candidates = {pid: p for pid, p in table.items() if is_agent_candidate(p["command"])}
+    cwds = cwd_map(sorted(candidates))
+    for pid, proc in candidates.items():
+        proc["cwd"] = cwds.get(pid)
+        proc["cwd_real"] = realpath(cwds.get(pid))
+        proc["kind"] = candidate_kind(proc["command"])
+        proc["family"] = candidate_family(proc["command"])
+        proc["flags"] = argv_flags(proc["command"])
+
+    # helper → owning session (strongest evidence)
+    helper_owner: dict[str, tuple[int, str]] = {}   # seat -> (pid, helper kind)
+    for helper in helpers:
+        target = helper["target"]
+        if not target:
+            continue
+        for anc in ancestors(helper["proc"]["pid"], table):
+            if anc in candidates:
+                helper_owner.setdefault(target, (anc, helper["kind"]))
+                break
+
+    claimed: set[int] = set()
+    seat_session: dict[str, dict] = {}
+    for seat, (pid, hkind) in helper_owner.items():
+        if seat not in seat_id_set:
+            continue
+        if not agents.get(seat, {}).get("runtime", "").startswith("claude"):
+            continue
+        home_real = realpath(agents[seat].get("home"))
+        owner_cwd = candidates[pid].get("cwd_real")
+        if home_real and owner_cwd and owner_cwd != home_real:
+            # a watcher for seat X started from a session sitting somewhere
+            # else — do not claim it as X's session, say so instead
+            warn(f"{hkind} for {seat} was started by pid {pid} whose cwd "
+                 f"({owner_cwd}) is not that seat's home ({home_real}); "
+                 "ancestry attribution skipped for this seat")
+            continue
+        seat_session[seat] = {"pid": pid, "detection": "watcher-ancestry",
+                              "via": hkind}
+        claimed.add(pid)
+
+    # -- mail ---------------------------------------------------------------
+    messages = scan_mail(mail_root, seat_ids)
+
+    malformed = [m for m in messages
+                 if not m["from"] or not m["subject"] or not m["timestamp_epoch"]]
+    if malformed:
+        sample = ", ".join(f"{m['mailbox_owner']}/{m['file']}" for m in malformed[:5])
+        warn(f"{len(malformed)} message file(s) are missing a from/subject/"
+             f"timestamp and are reported with null fields: {sample}"
+             + (" ..." if len(malformed) > 5 else ""))
+
+    sent_by: dict[str, list[dict]] = {}
+    for m in messages:
+        if m["from"]:
+            sent_by.setdefault(m["from"], []).append(m)
+    received_by: dict[str, list[dict]] = {}
+    for m in messages:
+        received_by.setdefault(m["mailbox_owner"], []).append(m)
+
+    # -- repos (parallel git) ----------------------------------------------
+    repo_targets = [(sid, cfg.get("home")) for sid, cfg in agents.items()
+                    if cfg.get("project") and cfg.get("home")]
+    seen_paths: dict[str, str] = {}
+    repo_states: dict[str, dict] = {}
+    unique_targets = []
+    for sid, home in repo_targets:
+        key = realpath(home)
+        if key in seen_paths:
+            repo_states[sid] = seen_paths[key]     # placeholder, resolved below
+            continue
+        seen_paths[key] = sid
+        unique_targets.append((sid, home))
+
+    results: dict[str, dict] = {}
+    if unique_targets:
+        with futures.ThreadPoolExecutor(max_workers=min(8, len(unique_targets))) as pool:
+            fut = {pool.submit(git_state, home): sid for sid, home in unique_targets}
+            for f in futures.as_completed(fut):
+                sid = fut[f]
+                try:
+                    results[sid] = f.result()
+                except Exception as exc:                      # defensive
+                    warn(f"git inspection failed for {sid}: {exc}")
+                    results[sid] = {"path": dict(repo_targets)[sid],
+                                    "is_git": False, "error": str(exc)}
+    for sid, owner_sid in list(repo_states.items()):
+        if isinstance(owner_sid, str):
+            repo_states[sid] = results.get(owner_sid, {})
+    for sid, state in results.items():
+        repo_states[sid] = state
+
+    # -- mail-root git (federation transport) -------------------------------
+    mail_repo = git_state(mail_root)
+
+    # -- seats --------------------------------------------------------------
+    seats_out = []
+    for sid, cfg in agents.items():
+        home = cfg.get("home")
+        home_real = realpath(home)
+        home_exists = bool(home and os.path.isdir(home))
+        runtime = cfg.get("runtime") or "unknown"
+
+        # ---- session detection
+        session = {
+            "live": False, "detection": None, "pid": None, "ppid": None,
+            "cwd": None, "elapsed_seconds": None, "elapsed_human": None,
+            "started_at": None, "kind": None,
+            "dangerously_skip_permissions": None, "model_flag": None,
+            "permission_mode": None, "launch_prompt": None, "command": None,
+            "candidates": [],
+        }
+        chosen_pid = None
+        detection = None
+        if sid in seat_session:
+            chosen_pid = seat_session[sid]["pid"]
+            detection = f"watcher-ancestry({seat_session[sid]['via']})"
+
+        cwd_matches = []
+        if runtime.startswith("claude") and home_real:
+            for pid, proc in candidates.items():
+                if proc.get("cwd_real") == home_real and proc.get("family") == "claude":
+                    cwd_matches.append(pid)
+            cwd_matches.sort(key=lambda p: (
+                candidates[p]["kind"] != "interactive",
+                not candidates[p]["flags"]["dangerously_skip_permissions"],
+                -(candidates[p]["elapsed_seconds"] or 0),
+            ))
+            if chosen_pid is None:
+                for pid in cwd_matches:
+                    if pid not in claimed:
+                        chosen_pid = pid
+                        detection = "cwd-match"
+                        claimed.add(pid)
+                        break
+
+        bridge_helpers = sorted(
+            (h for h in helpers
+             if h["target"] == sid and h["kind"] == "mail-bridge"),
+            key=lambda h: (h["wrapper"], -(h["proc"]["elapsed_seconds"] or 0)))
+        if chosen_pid is None and bridge_helpers and not runtime.startswith("claude"):
+            proc = bridge_helpers[0]["proc"]
+            session.update({
+                "live": True, "detection": "bridge", "pid": proc["pid"],
+                "ppid": proc["ppid"],
+                "elapsed_seconds": proc["elapsed_seconds"],
+                "elapsed_human": human_duration(proc["elapsed_seconds"]),
+                "started_at": iso(now - proc["elapsed_seconds"]) if proc["elapsed_seconds"] else None,
+                "kind": "bridged-on-demand",
+                "dangerously_skip_permissions": False,
+                "command": proc["command"][:400],
+                "note": ("bridged runtime has no persistent session; live means "
+                         "the mail-bridge process is up and will invoke the CLI "
+                         "when mail arrives"),
+            })
+        elif chosen_pid is not None:
+            proc = candidates[chosen_pid]
+            session.update({
+                "live": True, "detection": detection, "pid": chosen_pid,
+                "ppid": proc["ppid"], "cwd": proc.get("cwd"),
+                "elapsed_seconds": proc["elapsed_seconds"],
+                "elapsed_human": human_duration(proc["elapsed_seconds"]),
+                "started_at": iso(now - proc["elapsed_seconds"]) if proc["elapsed_seconds"] else None,
+                "kind": proc["kind"],
+                "dangerously_skip_permissions": proc["flags"]["dangerously_skip_permissions"],
+                "model_flag": proc["flags"]["model_flag"],
+                "permission_mode": proc["flags"]["permission_mode"],
+                "launch_prompt": proc["flags"]["launch_prompt"],
+                "command": proc["command"][:400],
+            })
+            if (proc["flags"]["model_flag"] and cfg.get("model")
+                    and proc["flags"]["model_flag"] != cfg["model"]):
+                session["model_mismatch"] = (
+                    f"roster says {cfg['model']}, process launched with "
+                    f"{proc['flags']['model_flag']}")
+        for pid in cwd_matches:
+            proc = candidates[pid]
+            session["candidates"].append({
+                "pid": pid, "kind": proc["kind"], "cwd": proc.get("cwd"),
+                "elapsed_human": human_duration(proc["elapsed_seconds"]),
+                "model_flag": proc["flags"]["model_flag"],
+                "dangerously_skip_permissions": proc["flags"]["dangerously_skip_permissions"],
+                "selected": pid == chosen_pid,
+                "claimed_by_other_seat": pid in claimed and pid != chosen_pid,
+            })
+
+        # ---- mail counters
+        recv = received_by.get(sid, [])
+        sent = sent_by.get(sid, [])
+        new_dir = os.path.join(mail_root, sid, "new")
+        cur_dir = os.path.join(mail_root, sid, "cur")
+        maildir_exists = os.path.isdir(new_dir) and os.path.isdir(cur_dir)
+        if not maildir_exists:
+            warn(f"seat {sid} has no maildir under {mail_root} (run agentmail-init)")
+        unread = [m for m in recv if m["unread"]]
+        mismatches = sum(1 for m in recv
+                         if m["to_header"] and m["to_header"] != sid)
+
+        def newest(items):
+            stamped = [m for m in items if m["timestamp_epoch"]]
+            return max(stamped, key=lambda m: m["timestamp_epoch"]) if stamped else None
+
+        last_recv = newest(recv)
+        last_sent = newest(sent)
+        oldest_unread = min((m for m in unread if m["timestamp_epoch"]),
+                            key=lambda m: m["timestamp_epoch"], default=None)
+
+        # ---- activity state machine
+        repo = repo_states.get(sid)
+        evidence: list[str] = []
+        confidence = "high"
+        if not home_exists:
+            state = "UNREACHABLE"
+            evidence.append("home path does not exist")
+            confidence = "high"
+        elif not table:
+            state = "UNREACHABLE"
+            evidence.append("process table unavailable — liveness undecidable")
+            confidence = "low"
+        elif not session["live"]:
+            state = "DARK"
+            evidence.append("no agent process found for this seat")
+        else:
+            busy = False
+            if repo and repo.get("is_git"):
+                if repo.get("uncommitted_files"):
+                    busy = True
+                    evidence.append(
+                        f"{repo['uncommitted_files']} uncommitted file(s) in repo")
+                age = repo.get("head_age_seconds")
+                if age is not None and age <= BUSY_WINDOW_SECONDS:
+                    busy = True
+                    evidence.append(
+                        f"HEAD commit {human_duration(age)} ago "
+                        f"(< {BUSY_WINDOW_SECONDS}s)")
+                if not busy:
+                    evidence.append("repo clean and no commit inside the busy window")
+            else:
+                confidence = "medium"
+                evidence.append("no project repo — substituted mail/bridge signals")
+                if last_sent and (now - last_sent["timestamp_epoch"]) <= BUSY_WINDOW_SECONDS:
+                    busy = True
+                    evidence.append(
+                        "sent mail "
+                        f"{human_duration(now - last_sent['timestamp_epoch'])} ago")
+                log_path = os.path.join(mail_root, sid, "bridge.log")
+                if os.path.isfile(log_path):
+                    try:
+                        age = now - os.path.getmtime(log_path)
+                        if age <= BUSY_WINDOW_SECONDS:
+                            busy = True
+                            evidence.append(
+                                f"bridge.log written {human_duration(age)} ago")
+                    except OSError:
+                        pass
+            state = "LIVE_BUSY" if busy else "LIVE_IDLE"
+
+        seats_out.append({
+            "id": sid,
+            "role": cfg.get("role"),
+            "site": cfg.get("site"),
+            "project": cfg.get("project"),
+            "model": cfg.get("model"),
+            "runtime": runtime,
+            "home": home,
+            "home_exists": home_exists,
+            "description": cfg.get("description"),
+            "session": session,
+            "maildir_present": maildir_exists,
+            "inbox_unread": len(unread),
+            "inbox_processed": len(recv) - len(unread),
+            "oldest_unread_at": oldest_unread["timestamp"] if oldest_unread else None,
+            "unread_age_seconds": (int(now - oldest_unread["timestamp_epoch"])
+                                   if oldest_unread else None),
+            "mail_received_total": len(recv),
+            "mail_sent_total": len(sent),
+            "last_received_at": last_recv["timestamp"] if last_recv else None,
+            "last_sent_at": last_sent["timestamp"] if last_sent else None,
+            "last_received_from": last_recv["from"] if last_recv else None,
+            "last_sent_to": last_sent["mailbox_owner"] if last_sent else None,
+            "to_header_mismatches": mismatches,
+            "activity": state,
+            "activity_evidence": evidence,
+            "activity_confidence": confidence,
+            "has_repo": bool(repo and repo.get("is_git")),
+        })
+
+    # -- repos block --------------------------------------------------------
+    repos_out = []
+    emitted_paths = set()
+    for sid, cfg in agents.items():
+        if not cfg.get("project") or not cfg.get("home"):
+            continue
+        state = dict(repo_states.get(sid) or {"path": cfg.get("home"), "is_git": False,
+                                              "error": "not inspected"})
+        key = (sid, realpath(cfg.get("home")))
+        if key in emitted_paths:
+            continue
+        emitted_paths.add(key)
+        state.update({"seat": sid, "project": cfg.get("project")})
+        repos_out.append(state)
+
+    # -- mail flow ----------------------------------------------------------
+    window_start = now - args.hours * 3600
+    flow_all = [m for m in messages
+                if m["timestamp_epoch"] and m["timestamp_epoch"] >= window_start]
+    truncated = False
+    if len(flow_all) > args.max_mail:
+        truncated = True
+        warn(f"mail_flow truncated: {len(flow_all)} messages in the last "
+             f"{args.hours}h, emitting the {args.max_mail} most recent")
+        flow_all = flow_all[-args.max_mail:]
+    flow_out = [{
+        "timestamp": m["timestamp"],
+        "age_seconds": int(now - m["timestamp_epoch"]),
+        "from": m["from"],
+        "to": m["mailbox_owner"],
+        "to_header": m["to_header"],
+        "subject": m["subject"],
+        "type": m["type"],
+        "thread": m["thread"],
+        "unread": m["unread"],
+        "ack": m["ack"],
+        "file": m["file"],
+        "timestamp_source": m["timestamp_source"],
+    } for m in flow_all]
+
+    # -- threads ------------------------------------------------------------
+    groups: dict[str | None, list[dict]] = {}
+    for m in messages:
+        groups.setdefault(m["thread"], []).append(m)
+    threads_out = []
+    for thread, msgs in groups.items():
+        ordered = sorted(msgs, key=lambda m: (m["timestamp_epoch"] or 0,
+                                              m["mailbox_owner"], m["file"]))
+        last = ordered[-1]
+        first = ordered[0]
+        # a broadcast is N files with one timestamp: treat every copy sharing
+        # the newest timestamp as "the last message" for reply-owed purposes
+        last_ts = last["timestamp_epoch"]
+        tied = [m for m in ordered if m["timestamp_epoch"] == last_ts]
+        owed = sorted({m["mailbox_owner"] for m in tied if m["unread"]})
+        participants = sorted({m["mailbox_owner"] for m in ordered}
+                              | {m["from"] for m in ordered if m["from"]})
+        threads_out.append({
+            "thread": thread,
+            "synthetic": thread is None,
+            "message_count": len(ordered),
+            "participants": participants,
+            "first_message_at": first["timestamp"],
+            "last_message_at": last["timestamp"],
+            "last_message_age_seconds": (int(now - last["timestamp_epoch"])
+                                         if last["timestamp_epoch"] else None),
+            "last_message_subject": last["subject"],
+            "last_message_from": last["from"],
+            "last_message_to": last["mailbox_owner"],
+            "last_message_type": last["type"],
+            "last_message_copies": len(tied),
+            "last_message_unread": bool(owed),
+            "reply_owed_by": owed,
+            "unread_count": sum(1 for m in ordered if m["unread"]),
+            "types": sorted({m["type"] for m in ordered if m["type"]}),
+        })
+    threads_out.sort(key=lambda t: (t["last_message_at"] or ""), reverse=True)
+
+    # -- bridges ------------------------------------------------------------
+    grouped: dict[tuple[str, str | None], list[dict]] = {}
+    for helper in helpers:
+        grouped.setdefault((helper["kind"], helper["target"]), []).append(helper)
+
+    bridges_out = []
+    for (kind, target), group in grouped.items():
+        # the representative is the longest-running non-wrapper process; the
+        # `zsh -c` wrappers an agent's Bash tool spawns are kept in processes[]
+        ranked = sorted(group, key=lambda h: (h["wrapper"],
+                                              -(h["proc"]["elapsed_seconds"] or 0)))
+        rep = ranked[0]["proc"]
+        log = None
+        log_path = os.path.join(mail_root, target, "bridge.log") if target else None
+        if log_path and os.path.isfile(log_path):
+            try:
+                st = os.stat(log_path)
+                log = {"path": log_path, "size_bytes": st.st_size,
+                       "modified_at": iso(st.st_mtime),
+                       "modified_age_seconds": int(now - st.st_mtime)}
+            except OSError as exc:
+                warn(f"cannot stat {log_path}: {exc}")
+        bridges_out.append({
+            "kind": kind,
+            "target": target,
+            "target_is_roster_seat": target in seat_id_set if target else False,
+            "pid": rep["pid"],
+            "ppid": rep["ppid"],
+            "pids": sorted({h["proc"]["pid"] for h in group}),
+            "instance_count": sum(1 for h in group if not h["wrapper"]),
+            "uptime_seconds": rep["elapsed_seconds"],
+            "uptime_human": human_duration(rep["elapsed_seconds"]),
+            "started_at": (iso(now - rep["elapsed_seconds"])
+                           if rep["elapsed_seconds"] else None),
+            "owner_session_pid": (helper_owner.get(target, (None, None))[0]
+                                  if target else None),
+            "command": rep["command"][:400],
+            "processes": [{
+                "pid": h["proc"]["pid"], "ppid": h["proc"]["ppid"],
+                "wrapper": h["wrapper"],
+                "uptime_seconds": h["proc"]["elapsed_seconds"],
+                "uptime_human": human_duration(h["proc"]["elapsed_seconds"]),
+            } for h in ranked],
+            "log": log,
+        })
+    bridges_out.sort(key=lambda b: (b["kind"], b["target"] or ""))
+
+    seats_with_watcher = {b["target"] for b in bridges_out
+                          if b["kind"] in ("mail-watch", "mail-bridge")}
+    for seat in seats_out:
+        seat["watcher_running"] = seat["id"] in seats_with_watcher
+
+    # -- board --------------------------------------------------------------
+    board = parse_board(args.board or os.path.join(repo_root, "overseer-tasks.md"),
+                        seat_id_set)
+
+    # -- federation ---------------------------------------------------------
+    local_site = None
+    for cfg in agents.values():
+        if cfg.get("role") == "parent" and cfg.get("site"):
+            local_site = cfg["site"]
+            break
+    sites_out = []
+    for name, cfg in (sites or {}).items():
+        seats_here = [sid for sid, a in agents.items() if a.get("site") == name]
+        sites_out.append({
+            "site": name,
+            "is_local": name == local_site,
+            "sync": cfg.get("sync"),
+            "machine": cfg.get("machine"),
+            "human": cfg.get("human"),
+            "seats": seats_here,
+            "seat_count": len(seats_here),
+        })
+    orphan_sites = sorted({a.get("site") for a in agents.values()
+                           if a.get("site") and a.get("site") not in (sites or {})})
+    for name in orphan_sites:
+        warn(f"site '{name}' is referenced by a seat but missing from roster.sites")
+
+    local_human = ""
+    for s in sites_out:
+        if s["is_local"] and s.get("human"):
+            local_human = s["human"].lower()
+    human_tokens = [t for t in re.split(r"\W+", local_human) if len(t) > 2]
+
+    contributors: dict[str, dict] = {}
+    for repo in repos_out:
+        for author in repo.get("recent_authors", []) or []:
+            key = f"{author['name']} <{author['email']}>"
+            rec = contributors.setdefault(key, {
+                "identity": key, "name": author["name"], "email": author["email"],
+                "commits": 0, "repos": [], "last_commit_at": None,
+                "last_commit_epoch": 0,
+            })
+            rec["commits"] += author["commits"]
+            rec["repos"].append({"project": repo.get("project"),
+                                 "commits": author["commits"]})
+            if author["last_commit_epoch"] > rec["last_commit_epoch"]:
+                rec["last_commit_epoch"] = author["last_commit_epoch"]
+                rec["last_commit_at"] = iso(author["last_commit_epoch"])
+    contributor_list = sorted(contributors.values(), key=lambda c: -c["commits"])
+    for c in contributor_list:
+        blob = f"{c['name']} {c['email']}".lower()
+        c["matches_local_human"] = any(t in blob for t in human_tokens) if human_tokens else False
+        c.pop("last_commit_epoch", None)
+
+    federation = {
+        "local_site": local_site,
+        "sites": sites_out,
+        "remote_sites": [s for s in sites_out if not s["is_local"]],
+        "remote_site_count": sum(1 for s in sites_out if not s["is_local"]),
+        "federation_doc": {
+            "path": os.path.join(repo_root, "agentmail", "FEDERATION.md"),
+            "present": os.path.isfile(os.path.join(repo_root, "agentmail", "FEDERATION.md")),
+            "transport": "git (whole .agent-mail directory as one private repo)",
+        },
+        "mail_repo": {
+            "path": mail_root,
+            "is_git": mail_repo.get("is_git", False),
+            "branch": mail_repo.get("branch"),
+            "remotes": mail_repo.get("remotes", []),
+            "remote_configured": bool(mail_repo.get("remotes")),
+            "ahead": mail_repo.get("ahead"),
+            "behind": mail_repo.get("behind"),
+            "uncommitted_files": mail_repo.get("uncommitted_files"),
+            "head": mail_repo.get("head"),
+        },
+        "sync_daemon_running": any(b["kind"] == "mail-sync" for b in bridges_out),
+        "active": False,
+        "repo_remotes": [{"project": r.get("project"), "seat": r.get("seat"),
+                          "remotes": r.get("remotes", [])} for r in repos_out],
+        "contributor_window_days": CONTRIBUTOR_WINDOW_DAYS,
+        "contributors": contributor_list,
+        "external_contributors": [c for c in contributor_list
+                                  if not c["matches_local_human"]],
+        "note": (
+            "'external_contributors' are git identities committing to these "
+            "repos in the window that do not match the local site's human — "
+            "humans working alongside the network with no seat in it. "
+            "Identity matching is string-based; one human with two emails "
+            "appears twice."
+        ),
+    }
+    federation["active"] = bool(
+        federation["remote_site_count"] and federation["mail_repo"]["remote_configured"])
+
+    # -- meta ---------------------------------------------------------------
+    activity_rules = {
+        "busy_window_seconds": BUSY_WINDOW_SECONDS,
+        "states": {
+            "LIVE_BUSY": ("session process is live AND (repo has >0 uncommitted "
+                          "files OR HEAD commit is younger than busy_window)"),
+            "LIVE_IDLE": "session process is live, but no recent-work signal fired",
+            "DARK": "no session process could be attributed to this seat",
+            "UNREACHABLE": ("the seat's home path is missing, or the process "
+                            "table could not be read, so liveness is undecidable"),
+        },
+        "session_detection_order": [
+            "watcher-ancestry: a `mail-watch <seat>`/`mail-bridge <seat>` process "
+            "is running and its nearest agent-process ancestor is the seat's "
+            "session (strongest — the seat is named explicitly)",
+            "cwd-match: an unclaimed Claude Code process whose lsof cwd equals "
+            "the seat's home (claude-code runtimes only)",
+            "bridge: for non-claude runtimes, the seat is live iff its "
+            "mail-bridge process is running (no persistent session exists)",
+        ],
+        "documented_deviations": [
+            "Seats with no project repo (parent overseer, council seats) have no "
+            "repo evidence; for those the busy signal is substituted with 'sent "
+            "mail within busy_window' and, for bridged seats, 'bridge.log "
+            "modified within busy_window'. Those seats report "
+            "activity_confidence=medium.",
+            "A pid attributed to one seat via watcher-ancestry is never offered "
+            "to a second seat by cwd-match — relevant because the parent and "
+            "council seats share a home directory.",
+            "Background/forked Claude processes (--fork-session/--resume) that "
+            "share a seat's cwd are listed under session.candidates but lose to "
+            "an interactive process when both exist.",
+        ],
+        "known_limits": [
+            "Uncommitted files prove work exists, not that it is happening now: "
+            "an idle session in a dirty tree reads LIVE_BUSY.",
+            "A live process is not a thinking model; LIVE_IDLE can mean 'waiting "
+            "on the human' or 'wedged'.",
+            "Mail counts exclude anything archived or deleted from cur/ (SPEC 3.4).",
+        ],
+    }
+
+    doc = {
+        "meta": {
+            "generated_at": iso(now),
+            "generated_at_epoch": int(now),
+            "tool": "network-snapshot",
+            "tool_version": TOOL_VERSION,
+            "mail_root": mail_root,
+            "repo_root": repo_root,
+            "roster_path": roster_path,
+            "roster_version": roster.get("version") if isinstance(roster, dict) else None,
+            "roster_owner": roster.get("roster_owner") if isinstance(roster, dict) else None,
+            "hostname": os.uname().nodename if hasattr(os, "uname") else None,
+            "mail_window_hours": args.hours,
+            "mail_cap": args.max_mail,
+            "mail_flow_truncated": truncated,
+            "counts": {
+                "seats": len(seats_out),
+                "sessions_live": sum(1 for s in seats_out if s["session"]["live"]),
+                "seats_dark": sum(1 for s in seats_out if s["activity"] == "DARK"),
+                "seats_live_busy": sum(1 for s in seats_out if s["activity"] == "LIVE_BUSY"),
+                "seats_live_idle": sum(1 for s in seats_out if s["activity"] == "LIVE_IDLE"),
+                "repos": len(repos_out),
+                "messages_total": len(messages),
+                "messages_unread": sum(1 for m in messages if m["unread"]),
+                "messages_malformed": len(malformed),
+                "messages_in_window": len(flow_out),
+                "threads": len(threads_out),
+                "bridges_and_watchers": len(bridges_out),
+                "board_items": len(board.get("items", [])),
+                "external_contributors": len(federation["external_contributors"]),
+            },
+            "activity_rules": activity_rules,
+            "warnings": WARNINGS,
+            "collection_ms": None,     # filled below
+        },
+        "seats": seats_out,
+        "repos": repos_out,
+        "mail_flow": flow_out,
+        "threads": threads_out,
+        "bridges": bridges_out,
+        "board": board,
+        "federation": federation,
+    }
+    doc["meta"]["collection_ms"] = int((time.time() - t0) * 1000)
+    return doc
+
+
+def main(argv: list[str] | None = None) -> int:
+    default_root = os.environ.get("AGENTMAIL_DIR") or os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        ".agent-mail")
+    ap = argparse.ArgumentParser(
+        prog="network-snapshot",
+        description="Emit one JSON document describing live AgentMail network state.")
+    ap.add_argument("--pretty", action="store_true", help="indent the JSON output")
+    ap.add_argument("--mail-root", default=default_root,
+                    help=f"path to .agent-mail (default: {default_root})")
+    ap.add_argument("--hours", type=float, default=DEFAULT_MAIL_WINDOW_HOURS,
+                    help="mail_flow window in hours (default: 48)")
+    ap.add_argument("--max-mail", type=int, default=DEFAULT_MAIL_CAP,
+                    help="cap on mail_flow entries, most recent kept (default: 300)")
+    ap.add_argument("--board", default=None,
+                    help="path to the task board (default: <repo-root>/overseer-tasks.md)")
+    args = ap.parse_args(argv)
+
+    try:
+        doc = build(args)
+    except Exception as exc:                     # last-resort: still emit JSON
+        doc = {
+            "meta": {
+                "generated_at": iso(time.time()),
+                "tool": "network-snapshot",
+                "tool_version": TOOL_VERSION,
+                "mail_root": os.path.abspath(args.mail_root),
+                "fatal_error": f"{type(exc).__name__}: {exc}",
+                "warnings": WARNINGS + [
+                    "snapshot aborted early; this document is a stub"],
+            },
+            "seats": [], "repos": [], "mail_flow": [], "threads": [],
+            "bridges": [], "board": {}, "federation": {},
+        }
+    text = json.dumps(doc, indent=2 if args.pretty else None,
+                      ensure_ascii=False, sort_keys=False, default=str)
+    try:
+        sys.stdout.write(text + "\n")
+    except BrokenPipeError:
+        try:
+            sys.stdout.close()
+        except Exception:
+            pass
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

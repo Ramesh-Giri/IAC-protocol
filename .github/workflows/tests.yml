@@ -1,0 +1,57 @@
+name: tests
+
+# The dashboard makes claims about a live system, so its derivations are the
+# part that must not rot: cadence refusals, the mailbox rules, liveness states,
+# the debt ledger, cycle detection, and the page contract (balanced tags, self
+# contained, always produces a page).
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ["3.9", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: unit tests
+        working-directory: agentmail/dashboard
+        run: python3 -m unittest discover -s tests -v
+
+      - name: tools run from a clean checkout
+        run: |
+          chmod +x agentmail/bin/*
+          agentmail/bin/agentmail-scan --all
+          agentmail/bin/agentmail-init overseer-ci demo-ci -d "$PWD/.agent-mail"
+          agentmail/bin/mail-send --from overseer-ci --to demo-ci \
+            -d "$PWD/.agent-mail" --subject "ci smoke" --type task -m "hello"
+          agentmail/bin/mail-check demo-ci -d "$PWD/.agent-mail"
+
+      - name: a flag can never become a seat
+        run: |
+          if agentmail/bin/agentmail-init --bogus -d "$PWD/.agent-mail"; then
+            echo "agentmail-init accepted an option as a seat id"; exit 1
+          fi
+          test ! -e "$PWD/.agent-mail/-d" || { echo "created a seat named -d"; exit 1; }
+
+      - name: dashboard renders and is self-contained
+        run: |
+          agentmail/bin/network-dashboard -o /tmp/network.html
+          python3 - <<'PY'
+          import re, sys
+          h = open("/tmp/network.html").read()
+          assert "<title>" in h, "no title"
+          assert not re.search(r'https?://|<script src|<link rel="stylesheet"', h), "not self-contained"
+          assert h.count('class="panel"') >= 9, "panels missing"
+          print(f"ok — {len(h)//1024} KB, self-contained")
+          PY

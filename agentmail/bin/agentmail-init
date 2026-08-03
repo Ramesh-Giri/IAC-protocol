@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# agentmail-init — create the maildir layout for one or more agents.
+#
+# Usage: agentmail-init [-d MAIL_DIR] <agent-id>...
+#        agentmail-init <agent-id>... [-d MAIL_DIR]     (either order works)
+#
+# Arguments are parsed in a loop rather than with getopts, so -d may appear
+# anywhere. This is not a stylistic choice: with getopts, `agentmail-init
+# seat-a -d /path` silently created a SEAT NAMED "-d" and another named after
+# the path, because getopts stops at the first non-option and "-d" matches a
+# legal agent id. A junk seat is not a loud failure — it sits in the spool
+# looking like a real one. Hence also the explicit rejection of ids that begin
+# with a dash, below.
+set -euo pipefail
+
+MAIL_DIR="${AGENTMAIL_DIR:-.agent-mail}"
+AGENTS=()
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -d) [ $# -ge 2 ] || { echo "-d needs a directory" >&2; exit 2; }
+        MAIL_DIR="$2"; shift 2;;
+    -h|--help)
+        sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 0;;
+    -*) echo "agentmail-init: unknown option: $1" >&2
+        echo "  (an agent id may not start with '-')" >&2; exit 2;;
+    *)  AGENTS+=("$1"); shift;;
+  esac
+done
+
+[ ${#AGENTS[@]} -ge 1 ] || { echo "usage: agentmail-init [-d dir] <agent-id>..." >&2; exit 2; }
+
+# Validate every id BEFORE creating anything: a half-initialised spool is worse
+# than none, because the seats that did get made look complete.
+for agent in "${AGENTS[@]}"; do
+  case "$agent" in
+    -*) echo "invalid agent-id '$agent': ids may not start with '-'" >&2; exit 2;;
+  esac
+  [[ "$agent" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || {
+    echo "invalid agent-id '$agent': use lowercase letters, digits, '_' and '-'," >&2
+    echo "  starting with a letter or digit (e.g. api-dana)" >&2; exit 2; }
+  if [[ "$agent" == */* ]]; then
+    echo "invalid agent-id '$agent': that looks like a path, not a seat id" >&2; exit 2
+  fi
+done
+
+mkdir -p "$MAIL_DIR/archive" "$MAIL_DIR/bin"
+touch "$MAIL_DIR/archive/.keep"
+
+for agent in "${AGENTS[@]}"; do
+  if [ -d "$MAIL_DIR/$agent/new" ]; then
+    echo "exists      $MAIL_DIR/$agent/{tmp,new,cur} (left as it is)"
+    continue
+  fi
+  mkdir -p "$MAIL_DIR/$agent/tmp" "$MAIL_DIR/$agent/new" "$MAIL_DIR/$agent/cur"
+  # .keep makes the (often-empty) dirs travel through git federation;
+  # tmp/ is deliberately keep-less — it must stay machine-local.
+  touch "$MAIL_DIR/$agent/new/.keep" "$MAIL_DIR/$agent/cur/.keep"
+  echo "initialized $MAIL_DIR/$agent/{tmp,new,cur}"
+done
+
+if [ ! -f "$MAIL_DIR/roster.json" ]; then
+  {
+    echo '{'
+    echo '  "version": 1,'
+    echo '  "agents": {'
+    sep=""
+    for agent in "${AGENTS[@]}"; do
+      printf '%b    "%s": { "role": "child", "repo": null, "model": null, "description": "" }' "$sep" "$agent"
+      sep=',\n'
+    done
+    echo ''
+    echo '  }'
+    echo '}'
+  } > "$MAIL_DIR/roster.json"
+  echo "wrote       $MAIL_DIR/roster.json — a stub. Fill in roles, sites, models,"
+  echo "            absolute homes and the human's name: everything downstream,"
+  echo "            including the dashboard, reads identity from this file."
+  echo "            Shape: agentmail/templates/roster.example.json"
+fi
