@@ -176,3 +176,46 @@ class TestComposite(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRemoteSeats(unittest.TestCase):
+    """A seat on another machine is FOGGED, never DOWN. Every local probe is
+    silent about it, and reporting that silence as a fault is a fabrication."""
+
+    def remote_seat(self, **kw):
+        s = {"id": "peer-bob", "site": "bob", "home": "/on/another/machine", "home_exists": False,
+             "maildir_present": True, "inbox_unread": 0, "inbox_processed": 3,
+             "watcher_running": False, "session": {"live": False, "candidates": []},
+             "activity": "UNREACHABLE", "mail_sent_total": 4}
+        s.update(kw)
+        return s
+
+    def test_liveness_is_remote_not_lost(self):
+        liv = state.derive_liveness(self.remote_seat(), [NOW - 600], is_remote=True)
+        self.assertEqual(liv["state"], "remote")
+        self.assertEqual(liv["at"], NOW - 600)
+        self.assertIn("another machine", liv["detail"])
+
+    def test_a_missing_local_watcher_does_not_make_it_deaf(self):
+        # its watcher runs on ITS machine; absence from this process table
+        # proves nothing at all
+        sl = state.slot_mailbox(self.remote_seat(), is_remote=True)
+        self.assertNotEqual(sl["state"], "deaf")
+        self.assertEqual(sl["state"], "clear")
+
+    def test_a_genuinely_old_queue_still_shows_on_a_remote_seat(self):
+        # depth and age come from the synced spool, so they ARE observable
+        sl = state.slot_mailbox(self.remote_seat(inbox_unread=5, unread_age_seconds=6 * HOUR),
+                                is_remote=True)
+        self.assertEqual(sl["state"], "deaf")
+
+    def test_composite_is_remote_not_dark_or_unknown(self):
+        word, tone = state.composite({"state": "dash"}, {"state": "clear"}, {"state": "dash"},
+                                     False, 10, is_remote=True)
+        self.assertEqual(word, "Remote")
+
+    def test_occupancy_never_claims_to_know(self):
+        occ = state.derive_occupancy({}, {"verdict": "stalled", "why": "x"}, None, False,
+                                     {"state": "clear"}, False, {}, is_remote=True)
+        self.assertEqual(occ["state"], "unknown")
+        self.assertIn("nothing here can tell", occ["detail"])

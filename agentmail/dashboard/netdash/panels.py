@@ -199,6 +199,9 @@ BUCKET_LABEL = {
                  "burning effort with nothing coming out, or a queue growing faster than it drains"),
     "working": ("WORKING", "good", "producing within its own cadence"),
     "idle": ("IDLE", "unknown", "listening, nothing outstanding — the resting state"),
+    "remote": ("REMOTE — FOGGED", "unknown",
+               "on other machines: their mail is visible here, their processes are not. "
+               "Never reported as down"),
 }
 
 def seat_row(ms, M) -> str:
@@ -241,7 +244,7 @@ def seat_row(ms, M) -> str:
         f'<td class="c-seat"><span class="pos">{ms["n"]:02d}</span> <b>{e(sid)}</b>'
         f'<i class="sub">{e(s.get("project") or s.get("role") or "")}</i></td>'
         # 2 state: two axes, composite, then the evidence strip
-        f'<td class="c-state">{two_axis_cell(ms["liv"], ms["occ"])}'
+        f'<td class="c-state">{"<span class=" + chr(34) + "vis fogged" + chr(34) + ">fogged</span>" if ms.get("remote") else ""}{two_axis_cell(ms["liv"], ms["occ"])}'
         f'<div class="row-2">{vol("<b class=" + chr(34) + "comp " + TONE_CLASS.get(ms["tone"], "t-unk") + chr(34) + ">" + e(ms["composite"]) + "</b>", unknown="<b class=" + chr(34) + "comp t-unk" + chr(34) + ">Unknown (stale)</b>")}'
         + ('<span class="chip unk" title="self-reported by the seat, not verified">self-reported</span>'
            if ms["blocked"] else "")

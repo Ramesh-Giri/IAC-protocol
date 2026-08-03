@@ -125,7 +125,7 @@ def slot_session(seat: dict) -> dict:
         return {"state": "half", "word": "ambiguous", "detail": detail, "tone": "warn"}
     return {"state": "filled", "word": "running", "detail": detail, "tone": "good"}
 
-def slot_mailbox(seat: dict) -> dict:
+def slot_mailbox(seat: dict, is_remote: bool = False) -> dict:
     if not seat.get("maildir_present"):
         return {"state": "dash", "word": "no maildir", "n": None,
                 "detail": "this seat has no maildir — nothing can be delivered to it", "tone": "unknown"}
@@ -135,7 +135,9 @@ def slot_mailbox(seat: dict) -> dict:
     deaf = []
     if age is not None and age > DEAF_UNREAD_SECONDS:
         deaf.append(f"oldest unread is {dur(age, short=True)} old (>4h)")
-    if not seat.get("watcher_running"):
+    if not seat.get("watcher_running") and not is_remote:
+        # a remote seat's watcher runs on its own machine and is invisible here;
+        # its absence from THIS process table proves nothing
         deaf.append("no mail-watch/mail-bridge process for this seat")
     if unread > 0 and processed == 0:
         deaf.append("cur/ is empty while new/ is not — nothing has ever been processed")
@@ -188,6 +190,10 @@ def slot_work(seat: dict, repo: dict | None, now: int) -> dict:
 
 LIVENESS_DOC = {
     "live": "a process is attributed to this seat right now",
+    "remote": "this seat lives on another machine. Its process, its watcher and its repository are "
+              "not observable from here — only the mail it has exchanged, and only as recently as the "
+              "last sync. It is FOGGED, never DOWN: absence of evidence here is not evidence of absence "
+              "there",
     "never-started": "no process, and no trace that this seat has EVER produced anything — "
                      "this is not 'down', it is 'never connected'",
     "stopped-or-lost": "no process, but it was producing until T. This filesystem keeps no exit record, "
@@ -206,9 +212,21 @@ OCCUPANCY_DOC = {
     "unknown": "not enough evidence to place it",
 }
 
-LIVENESS_TONE = {"live": "good", "never-started": "unknown", "stopped-or-lost": "bad", "unreachable": "unknown"}
+LIVENESS_TONE = {"live": "good", "remote": "unknown", "never-started": "unknown",
+                 "stopped-or-lost": "bad", "unreachable": "unknown"}
 
-def derive_liveness(seat: dict, events: list[int]) -> dict:
+def derive_liveness(seat: dict, events: list[int], is_remote: bool = False) -> dict:
+    # A seat on another machine is fogged by definition. Every local signal
+    # (process table, watcher, cwd) is silent about it, and reporting that
+    # silence as DARK would be a fabrication — the single worst thing this
+    # page can do. Its last observed output still means something, so it is
+    # shown, stamped.
+    if is_remote:
+        last = max(events) if events else None
+        return {"state": "remote", "at": last,
+                "detail": ("home is on another machine; this page can see its mail and nothing else. "
+                           + ("last message from it at the time shown" if last else
+                              "no message from it has arrived here yet"))}
     ses = seat.get("session") or {}
     if not seat.get("home_exists", True) or seat.get("activity") == "UNREACHABLE" or "live" not in ses:
         return {"state": "unreachable", "at": None,
@@ -227,10 +245,11 @@ def derive_liveness(seat: dict, events: list[int]) -> dict:
                        "this filesystem, so stopped-cleanly and crashed cannot be told apart")}
 
 def derive_occupancy(seat: dict, cad: dict, cpu: dict | None, blocked: bool, sl_m: dict, live: bool,
-                     delta: dict | None = None) -> dict:
+                     delta: dict | None = None, is_remote: bool = False) -> dict:
     if blocked:
         return {"state": "interrupted", "detail": "its own last outbound message was type:blocked and nothing has "
                                                   "arrived for it since — self-reported, resumable"}
+    produced = ((delta or {}).get("sent") or 0) + ((delta or {}).get("commits") or 0)
     burning = bool(cpu and cpu.get("pct", 0) >= CPU_SPIN_PERCENT)
     stalled = cad.get("verdict") == "stalled"
     if live and burning and (stalled or (cad.get("silence") or 0) > 1800):
@@ -238,9 +257,15 @@ def derive_occupancy(seat: dict, cad: dict, cpu: dict | None, blocked: bool, sl_
                 "detail": (f"{cpu['pct']:.0f}% CPU over a {cpu.get('gap', CPU_SAMPLE_GAP):.1f}s sample taken now, "
                            f"but nothing written or sent for {dur(cad.get('silence'), short=True)}"
                            + (f" (its own longest normal gap is {dur(cad.get('deadline'), short=True)})" if cad.get("deadline") else ""))}
+    if is_remote:
+        if cad.get("verdict") == "on-cadence" and produced:
+            return {"state": "working",
+                    "detail": "still mailing at its own usual rhythm, as of the last sync: " + cad.get("why", "")}
+        return {"state": "unknown",
+                "detail": "on another machine — nothing here can tell working from idle from stopped. "
+                          + (cad.get("why") or "")}
     if not live:
         return {"state": "unknown", "detail": "no process — occupancy cannot be observed, only the debt it left"}
-    produced = ((delta or {}).get("sent") or 0) + ((delta or {}).get("commits") or 0)
     if cad.get("verdict") == "on-cadence":
         if produced:
             return {"state": "working", "detail": cad.get("why", "") + f"; {produced} output event(s) inside "
@@ -268,6 +293,7 @@ def derive_occupancy(seat: dict, cad: dict, cpu: dict | None, blocked: bool, sl_
     return {"state": "unknown", "detail": cad.get("why", "no cadence established")}
 
 COMPOSITE_DOC = {
+    "Remote": "on another machine: its mail is visible here, its process is not. Fogged, never Dark",
     "Working": "session running · mailbox not deaf · work slot producing",
     "Idle-listening": "session running · mailbox current · no work signal, but it spoke or committed recently",
     "Mute": f"session running · mailbox current · nothing produced and nothing said for >{dur(MUTE_SILENCE_SECONDS, short=True)}",
@@ -277,7 +303,12 @@ COMPOSITE_DOC = {
     "Unknown": "at least one slot could not be evaluated",
 }
 
-def composite(sl_s, sl_m, sl_w, blocked: bool, silence_seconds) -> tuple[str, str]:
+def composite(sl_s, sl_m, sl_w, blocked: bool, silence_seconds, is_remote: bool = False) -> tuple[str, str]:
+    # remote is checked first: a fogged seat's local slots are dashes by
+    # construction, and "Unknown" would hide the one fact we do have — that it
+    # is somewhere else, not that we failed to look
+    if is_remote:
+        return "Remote", "unknown"
     if sl_s["state"] == "dash" or (sl_w["state"] == "dash" and sl_m["state"] == "dash"):
         return "Unknown", "unknown"
     if sl_s["state"] == "hollow":

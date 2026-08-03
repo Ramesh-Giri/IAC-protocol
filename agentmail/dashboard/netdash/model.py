@@ -34,6 +34,14 @@ def build_model(doc: dict, out_path: str, args) -> dict:
 
     seat_ids = [s.get("id") for s in seats]
     ident = site_identity(fed, meta, seats)
+    local_site = ident.get("site_id") or fed.get("local_site")
+
+    def is_remote_seat(s: dict) -> bool:
+        """A seat belongs to another machine when its site is not ours. Every
+        local probe — process table, watcher, cwd, CPU, git — is silent about
+        such a seat, so none of them may be used to judge it."""
+        site = s.get("site")
+        return bool(local_site and site and site != local_site)
 
     def short_seat(sid: str) -> str:
         """Drop this site's own suffix for cramped labels — nothing else."""
@@ -63,9 +71,17 @@ def build_model(doc: dict, out_path: str, args) -> dict:
     for idx, s in enumerate(seats, start=1):
         sid = s.get("id")
         repo = repo_by_seat.get(sid)
+        remote = is_remote_seat(s)
         sl_s = slot_session(s)
-        sl_m = slot_mailbox(s)
+        sl_m = slot_mailbox(s, is_remote=remote)
         sl_w = slot_work(s, repo, snap_epoch)
+        if remote:
+            # the local process table said nothing about it, which is not news
+            sl_s = {"state": "dash", "word": "not observable",
+                    "detail": "this seat's session lives on another machine", "tone": "unknown"}
+            sl_w = {"state": "dash", "word": "not observable",
+                    "detail": "no repository or process for this seat exists on this machine",
+                    "tone": "unknown"}
         outs = sorted(last_out.get(sid, []), key=lambda m: m.get("timestamp") or "")
         ins = sorted(last_in.get(sid, []), key=lambda m: m.get("timestamp") or "")
         blocked = False
@@ -78,7 +94,7 @@ def build_model(doc: dict, out_path: str, args) -> dict:
                 blocked_msg = outs[-1]
         sent_epoch = epoch_of(s.get("last_sent_at"))
         silence = (snap_epoch - sent_epoch) if sent_epoch else None
-        comp, tone = composite(sl_s, sl_m, sl_w, blocked, silence)
+        comp, tone = composite(sl_s, sl_m, sl_w, blocked, silence, is_remote=remote)
 
         # ---- events that define this seat's OWN cadence --------------------
         events, event_kinds = [], []
@@ -128,16 +144,18 @@ def build_model(doc: dict, out_path: str, args) -> dict:
             depth["behind_why"] = ("queue grew, but no cadence is established for this seat, so there is no "
                                    "basis to call it behind" if depth.get("growing") else "")
 
-        seat_cpu = cpu.get((s.get("session") or {}).get("pid")) if (s.get("session") or {}).get("pid") else None
-        liv = derive_liveness(s, events)
-        occ = derive_occupancy(s, cad, seat_cpu, blocked, sl_m, liv["state"] == "live", delta)
+        seat_cpu = (cpu.get((s.get("session") or {}).get("pid"))
+                    if (s.get("session") or {}).get("pid") and not remote else None)
+        liv = derive_liveness(s, events, is_remote=remote)
+        occ = derive_occupancy(s, cad, seat_cpu, blocked, sl_m, liv["state"] == "live", delta,
+                               is_remote=remote)
 
         model_seats.append({
             "n": idx, "seat": s, "repo": repo, "s": sl_s, "m": sl_m, "w": sl_w,
             "composite": comp, "tone": tone, "blocked": blocked, "blocked_msg": blocked_msg,
             "outs": outs[-3:][::-1], "all_outs": outs, "ins": ins, "silence": silence,
             "cad": cad, "cpu": seat_cpu, "liv": liv, "occ": occ, "delta": delta,
-            "scan": scan, "depth": depth, "bridge": br,
+            "scan": scan, "depth": depth, "bridge": br, "remote": remote,
         })
     by_id = {ms["seat"].get("id"): ms for ms in model_seats}
 
@@ -147,6 +165,12 @@ def build_model(doc: dict, out_path: str, args) -> dict:
     for ms in model_seats:
         b = "idle"
         why = ""
+        if ms.get("remote"):
+            b = "remote"
+            why = ("on another machine — visible here only through the mail it exchanges, as of the "
+                   "last sync")
+            ms["bucket"], ms["bucket_why"] = b, why
+            continue
         if ms["occ"]["state"] == "interrupted":
             subj = ((ms.get("blocked_msg") or {}).get("subject") or "").lower()
             if any(w in subj for w in APPROVAL_WORDS):
@@ -171,7 +195,7 @@ def build_model(doc: dict, out_path: str, args) -> dict:
         else:
             b, why = "idle", ms["occ"].get("detail", "")
         ms["bucket"], ms["bucket_why"] = b, why
-    BUCKET_ORDER = ["needs-approval", "needs-input", "failed", "spinning", "working", "idle"]
+    BUCKET_ORDER = ["needs-approval", "needs-input", "failed", "spinning", "working", "idle", "remote"]
 
     # ---- fetch ages (read by this tool, at generation time) ----------------
     fetches = []
@@ -188,6 +212,8 @@ def build_model(doc: dict, out_path: str, args) -> dict:
     for ms in model_seats:
         s, repo = ms["seat"], ms["repo"]
         sid = s.get("id")
+        if ms.get("remote"):
+            continue          # local signals say nothing about another machine
         ses = s.get("session") or {}
         mf, rm = ses.get("model_flag"), s.get("model")
         if mf and rm and mf != rm:
@@ -264,6 +290,8 @@ def build_model(doc: dict, out_path: str, args) -> dict:
     for ms in model_seats:
         s = ms["seat"]
         sid = s.get("id")
+        if ms.get("remote"):
+            continue
         if ms["m"]["state"] == "deaf":
             alert("red", f"{sid} is DEAF",
                   ms["m"]["detail"] + f"; {s.get('inbox_unread') or 0} message(s) waiting in new/",
@@ -330,7 +358,9 @@ def build_model(doc: dict, out_path: str, args) -> dict:
               f"{c.get('identity')} — last commit "
               + (dur(now - (epoch_of(c.get('last_commit_at')) or now), short=True) + " ago"
                  if c.get("last_commit_at") else "unknown")
-              + ". Every agent here is blind to this person's work; that blindness has already caused one overwrite.")
+              + ". Every agent here is blind to this person's work: they have no seat, so nothing in this "
+                "network can mail them and they cannot mail in. Either accept that gap knowingly, or "
+                "federate — agentmail/FEDERATION.md, and step 7 of SETUP_PROMPT.md.")
     for w in (meta.get("warnings") or []):
         alert("amber", "snapshot warning", str(w))
     if meta.get("mail_flow_truncated"):

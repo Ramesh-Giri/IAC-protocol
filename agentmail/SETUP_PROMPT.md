@@ -220,7 +220,65 @@ want a fresh page — nothing here is a daemon.
 
 ---
 
-### Step 7 — hand over the launch commands
+### Step 7 (only if they work with other people) — connect a collaborator
+
+Ask: **does anyone else commit to these repos?** The scan already told you —
+it lists every git author from the last 30 days per project. If there are
+others, they are invisible to this network: their agents cannot be mailed,
+and yours cannot be mailed by them. The dashboard reports them as
+`SHROUDED — no seat, no maildir`.
+
+Two honest options; give the human both and let them choose.
+
+**A. Stay single-site (fine, and the default).** Their collaborator's agents
+simply are not part of this network. The dashboard keeps naming them under
+"humans in these repos with no seat", which is the point: you can see the gap
+rather than forget it exists.
+
+**B. Federate.** The collaborator clones the same toolkit repo on their own
+machine and runs this same setup with **their own site handle**. Then the two
+machines share one `.agent-mail/` **as its own private git repository**:
+
+```sh
+# once, on the first machine — the spool becomes its own repo
+cd <org root>/.agent-mail
+git init && git add -A && git commit -m "network spool"
+git remote add origin <private repo URL>     # PRIVATE. This carries every message.
+git push -u origin main
+
+# on each machine afterwards, including the collaborator's
+cd <their org root> && git clone <private repo URL> .agent-mail
+
+# then, on every machine, one sync loop per machine
+<org root>/agentmail/bin/mail-sync -d <org root>/.agent-mail --interval 30
+```
+
+Read `agentmail/FEDERATION.md` before doing this and tell the human what it
+says plainly:
+
+- Delivery between machines is **eventual**, not instant — it arrives on the
+  next sync (default 30 s). Same-machine delivery stays immediate.
+- Nothing about the protocol changes. An agent cannot tell whether the seat it
+  is mailing is local or on another continent.
+- Git cannot conflict here **by construction**: message filenames are unique,
+  message files are immutable once delivered, and only a seat's home machine
+  moves its own `new/ → cur/`.
+- The roster must list **both sites** and all their seats, and only the
+  `roster_owner` edits it.
+- **That private repo contains the full text of every message the network
+  ever sends.** It must not be public, and everyone with access to it can read
+  everything both sides' agents say.
+- Cross-site, the dashboard shows the other machine's seats as **fogged**: it
+  can see their mail, never their processes. It will not claim they are down,
+  because from here that is unknowable.
+
+The honest caveat, and say it out loud: federation is fully specified and only
+lightly exercised. Single-machine is the well-worn path. If they try it,
+suggest starting with one shared seat before moving the whole network.
+
+---
+
+### Step 8 — hand over the launch commands
 
 Print these filled in with real values, and explain that sessions are
 disposable: all durable state lives in the mailboxes, the task board and the
