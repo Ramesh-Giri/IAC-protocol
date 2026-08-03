@@ -50,6 +50,22 @@ document is enough to finish the job.
 
 ---
 
+### Step 0 — first, work out which of two jobs this is
+
+```
+ls <org root>/.agent-mail/roster.json
+```
+
+- **It does not exist** → you are **starting a network**. Continue to step 1.
+- **It exists** → a network is already set up here. Read it. If it lists a
+  site that is not this human's, you are **joining an existing network** —
+  jump to step 7B and do that instead of steps 2–4, because the roster is the
+  contract and the person who wrote it already decided the site handles, the
+  seat names and which projects are shared. Do not create a second network
+  beside theirs.
+
+---
+
 ### Step 1 — see what is actually here
 
 ```
@@ -72,6 +88,22 @@ Show the human the table and confirm three things:
    a suggestion with evidence, not a decision: the human knows which repo can
    move money and the scanner does not. Map their answer onto the strongest
    and mid-tier models actually available to them.
+
+**Then, per project, ask who else works on it.** The scan already knows: it
+prints every git author from the last 30 days for each repo, so do not ask an
+open question — show the names it found and ask the human to label them:
+
+| the scan found | ask | record as |
+|---|---|---|
+| a name that is the human themself under another git identity | "same person?" | nothing — merge it |
+| a colleague who will also run this toolkit | "will they run their own agent network?" | a collaborator **with a site handle** |
+| a colleague who will not | "do they just commit here?" | a collaborator with `"site": null` |
+
+Record the answers in the roster's `projects` block (step 3). This is what
+lets an agent working on `api` know that a human called Bob also touches it,
+and — if Bob runs his own network — which seat to mail. A colleague with
+`"site": null` is recorded too: the dashboard keeps naming them as someone the
+network is blind to, which is the honest state, rather than forgetting them.
 
 Ask once, and explain the trade honestly:
 
@@ -118,6 +150,11 @@ none of them; get it right and the rest is automatic.
 - `agents`: the overseer (`role: parent`, `home` = org root, `project: null`)
   and one child per project (`role: child`, absolute `home`, the tier model,
   and a one-line description that says what the repo can *break*).
+- `projects`: one entry per project with its `collaborators` — every human who
+  works on that repo, their `site` (or `null` if they run no network), and the
+  `git_authors` strings they commit under, so the dashboard can match commits
+  to people. This is the block that makes cross-developer work visible; a
+  single-developer network still fills it in, with one entry.
 
 Delete the `_comment` key. Verify with:
 `python3 -c "import json;json.load(open('<org root>/.agent-mail/roster.json'))"`
@@ -220,61 +257,97 @@ want a fresh page — nothing here is a daemon.
 
 ---
 
-### Step 7 (only if they work with other people) — connect a collaborator
+### Step 7 — collaborators: inviting one, or joining one
 
-Ask: **does anyone else commit to these repos?** The scan already told you —
-it lists every git author from the last 30 days per project. If there are
-others, they are invisible to this network: their agents cannot be mailed,
-and yours cannot be mailed by them. The dashboard reports them as
-`SHROUDED — no seat, no maildir`.
+The scan told you who else commits to these repos. Nothing so far lets those
+people's agents talk to these ones. Two directions; do whichever applies.
 
-Two honest options; give the human both and let them choose.
+#### 7A — the human is FIRST, and wants to invite someone
 
-**A. Stay single-site (fine, and the default).** Their collaborator's agents
-simply are not part of this network. The dashboard keeps naming them under
-"humans in these repos with no seat", which is the point: you can see the gap
-rather than forget it exists.
-
-**B. Federate.** The collaborator clones the same toolkit repo on their own
-machine and runs this same setup with **their own site handle**. Then the two
-machines share one `.agent-mail/` **as its own private git repository**:
+Their colleague will clone the same toolkit repo. What the colleague cannot
+get from that clone is this network: `.agent-mail/` is deliberately not in it
+(it holds the text of every message). So the human must publish the spool
+**once**, to a repository that is **private**:
 
 ```sh
-# once, on the first machine — the spool becomes its own repo
 cd <org root>/.agent-mail
 git init && git add -A && git commit -m "network spool"
-git remote add origin <private repo URL>     # PRIVATE. This carries every message.
+git remote add origin <PRIVATE repo URL>      # never public: this is the mail
 git push -u origin main
+```
 
-# on each machine afterwards, including the collaborator's
-cd <their org root> && git clone <private repo URL> .agent-mail
+Before pushing, make sure the roster already contains:
 
-# then, on every machine, one sync loop per machine
+- a `sites` entry for the colleague — their handle, machine, **name and
+  email** (the email is how their commits are matched to them);
+- their seats under `agents`, one per project they work on, named
+  `<project>-<their site>`, with `home` set to the path **on their machine**
+  (ask the human; if unknown, leave a clear `TODO-<site>` marker and tell the
+  colleague's setup to fill it in);
+- a `projects` block listing them as a collaborator on the right repos.
+
+Then run the sync loop on this machine, and give the colleague two things:
+the **private spool URL** and the joining prompt below.
+
+```sh
 <org root>/agentmail/bin/mail-sync -d <org root>/.agent-mail --interval 30
 ```
 
-Read `agentmail/FEDERATION.md` before doing this and tell the human what it
-says plainly:
+#### 7B — the human is JOINING a network someone else built
 
-- Delivery between machines is **eventual**, not instant — it arrives on the
-  next sync (default 30 s). Same-machine delivery stays immediate.
-- Nothing about the protocol changes. An agent cannot tell whether the seat it
-  is mailing is local or on another continent.
-- Git cannot conflict here **by construction**: message filenames are unique,
-  message files are immutable once delivered, and only a seat's home machine
-  moves its own `new/ → cur/`.
-- The roster must list **both sites** and all their seats, and only the
-  `roster_owner` edits it.
-- **That private repo contains the full text of every message the network
-  ever sends.** It must not be public, and everyone with access to it can read
-  everything both sides' agents say.
-- Cross-site, the dashboard shows the other machine's seats as **fogged**: it
-  can see their mail, never their processes. It will not claim they are down,
-  because from here that is unknowable.
+You detected this in step 0, or they told you. Do **not** run steps 2–4: the
+roster is the contract, and the person who wrote it already fixed the site
+handles, the seat names and which projects are shared. Instead:
 
-The honest caveat, and say it out loud: federation is fully specified and only
-lightly exercised. Single-machine is the well-worn path. If they try it,
-suggest starting with one shared seat before moving the whole network.
+```sh
+cd <org root>
+git clone <PRIVATE spool URL> .agent-mail        # the network arrives here
+python3 -c "import json;print(json.load(open('.agent-mail/roster.json'))['sites'])"
+```
+
+Now read `.agent-mail/roster.json` and tell the human, in plain words, what
+you found: whose network this is, which sites exist, which projects are
+shared, who the collaborators are and which of them have seats. Then:
+
+1. **Find their site.** Match on the email or name in `sites`. If a site
+   already exists for them, adopt that handle — do not invent a new one. If
+   none does, ask for a handle and add one.
+2. **Create only their own seats:** `agentmail-init <project>-<their site> -d
+   <org root>/.agent-mail` for each project they actually have locally. Seats
+   for the other machine already exist in the spool; leave them alone.
+3. **Fix the homes.** Any `home` for their site is a path on *their* machine —
+   replace placeholders with real absolute paths from the scan.
+4. **Roster edits go through the owner.** `roster_owner` names the seat
+   allowed to edit the roster. If that is not this human's overseer, make the
+   change locally, and mail the owner what you changed and why rather than
+   assuming the edit is authoritative.
+5. Do steps 4, 5 and 6 as normal (identity files, mail self-test, dashboard),
+   then start the sync loop:
+
+```sh
+<org root>/agentmail/bin/mail-sync -d <org root>/.agent-mail --interval 30
+```
+
+6. **Prove it across machines**, not just locally: send one message to a seat
+   on the other machine and confirm the other side received it. Until a
+   message has made that round trip, federation is a claim, not a fact.
+
+#### What both humans should know
+
+- Delivery between machines is **eventual** — next sync, default 30 s.
+  Same-machine delivery stays instant.
+- Nothing about the protocol changes: an agent cannot tell whether the seat it
+  mails is local or on another continent.
+- Git cannot conflict here by construction — message filenames are unique,
+  files are immutable once delivered, and only a seat's home machine moves its
+  own `new/ → cur/`.
+- **The spool repo contains every message the network ever sends.** Private,
+  always. Everyone with access reads everything both sides' agents say.
+- Cross-site, the dashboard renders the other machine's seats as **fogged**:
+  it can see their mail, never their processes, and will not claim they are
+  down — from here that is unknowable.
+- Federation is fully specified and **lightly exercised**. Single-machine is
+  the well-worn path. Start with one shared seat before moving everything.
 
 ---
 

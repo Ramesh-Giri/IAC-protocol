@@ -46,6 +46,43 @@ agent.
 Prefer to see it first? `agentmail/bin/agentmail-scan --all` writes nothing and
 tells you what a network over this folder would look like.
 
+### Working with other people
+
+Tell it who else is in your repos, in the same first message. It already knows
+their git names from the scan — you are confirming, not typing a database:
+
+> Read `agentmail/SETUP_PROMPT.md` and build my agent network over this folder.
+> Run the scan first and show me what you found.
+> Collaborators: **api** is shared with **Bob Iyer** (bob@example.com) who will
+> run his own network; **web** is shared with **Carol Fenn**
+> (carol@example.com) who just commits and runs no agents. Set up the roster so
+> my agents can reach Bob's, and so Carol stays visible as someone we are blind
+> to.
+
+That records both people in the roster's `projects` block. Bob gets a site and
+seats his agents can be mailed at; Carol is recorded with `"site": null`, so
+the dashboard keeps naming her as a human in your repos with no seat — which is
+the honest state, not an oversight.
+
+### When your collaborator clones it later
+
+Send them two things: the toolkit repo, and the **private** URL of your mail
+spool (`.agent-mail` pushed as its own repo — step 7A of the setup prompt does
+this). Then their first message is:
+
+> Read `agentmail/SETUP_PROMPT.md` and follow step 7B — I am joining an
+> existing network. Clone the spool from `<private spool URL>` into
+> `.agent-mail`, read the roster, tell me whose network this is and which
+> projects are shared, then set up only my seats.
+
+Their Claude reads the roster you already wrote — site handles, seat names,
+which projects are shared, who the collaborators are — and configures their
+side to match instead of inventing a parallel network. Nobody re-types the
+agreement, because the roster **is** the agreement.
+
+**The spool repo must be private.** It carries the full text of every message
+your agents exchange.
+
 **Requirements:** Python 3.9+ and git. macOS or Linux. Claude Code (or any
 agent runtime that can run a shell command and watch a file).
 

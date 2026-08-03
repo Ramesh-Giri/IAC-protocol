@@ -1,40 +1,80 @@
 {
   "_comment": [
-    "Copy to <org root>/.agent-mail/roster.json and fill in. This file is the",
-    "single source of identity for the whole network: the dashboard reads the",
-    "human's name, the site, the seats and the projects from here and hardcodes",
-    "none of them. Absolute paths only — a relative 'home' silently produces a",
-    "seat that never matches its own process.",
-    "Delete this _comment key; JSON has no comments and every reader ignores it,",
-    "but it will show up in your dashboard's raw view."
+    "Copy to <org root>/.agent-mail/roster.json and fill in. Delete this key.",
+    "",
+    "This file is the single source of identity for the whole network, and when",
+    "two developers federate it is also the CONTRACT BETWEEN THEM: it travels",
+    "inside the shared .agent-mail repo, so the second person's setup reads it",
+    "and learns the site handles, the seat names and which projects are shared",
+    "instead of guessing or asking again.",
+    "",
+    "Absolute paths only. A relative 'home' silently produces a seat that never",
+    "matches its own process."
   ],
   "version": 1,
-  "roster_owner": "overseer-SITE",
+  "roster_owner": "overseer-alice",
+
   "sites": {
-    "SITE": {
-      "sync": "none",
-      "machine": "HOSTNAME",
-      "human": "YOUR FULL NAME"
+    "alice": {
+      "sync": "git",
+      "machine": "alice-mbp",
+      "human": "Alice Nakamura",
+      "email": "alice@example.com"
+    },
+    "bob": {
+      "sync": "git",
+      "machine": "bob-studio",
+      "human": "Bob Iyer",
+      "email": "bob@example.com"
     }
   },
+
+  "projects": {
+    "api": {
+      "description": "payments backend — can move money",
+      "collaborators": [
+        { "human": "Alice Nakamura", "site": "alice", "role": "owner" },
+        { "human": "Bob Iyer", "site": "bob", "role": "contributor",
+          "git_authors": ["Bob Iyer", "biyer", "bob@example.com"] }
+      ]
+    },
+    "web": {
+      "description": "marketing site",
+      "collaborators": [
+        { "human": "Alice Nakamura", "site": "alice", "role": "owner" },
+        { "human": "Carol Fenn", "site": null, "role": "contributor",
+          "git_authors": ["Carol Fenn", "carol@example.com"],
+          "note": "commits here but runs no agent network — invisible to every seat"
+        }
+      ]
+    }
+  },
+
   "agents": {
-    "overseer-SITE": {
-      "role": "parent",
-      "site": "SITE",
-      "project": null,
-      "model": "STRONGEST MODEL AVAILABLE TO YOU",
-      "runtime": "claude-code",
-      "home": "/absolute/path/to/org/root",
+    "overseer-alice": {
+      "role": "parent", "site": "alice", "project": null,
+      "model": "STRONGEST MODEL AVAILABLE TO YOU", "runtime": "claude-code",
+      "home": "/absolute/path/to/alice/org/root",
       "description": "supervising agent — user-facing, permission-prompted, owns no repo"
     },
-    "PROJECT-SITE": {
-      "role": "child",
-      "site": "SITE",
-      "project": "PROJECT",
-      "model": "TIER MODEL FOR THIS REPO",
-      "runtime": "claude-code",
-      "home": "/absolute/path/to/org/root/PROJECT",
+    "api-alice": {
+      "role": "child", "site": "alice", "project": "api",
+      "model": "TIER MODEL FOR THIS REPO", "runtime": "claude-code",
+      "home": "/absolute/path/to/alice/org/root/api",
       "description": "one line: what this repo is, and what it can break"
+    },
+
+    "overseer-bob": {
+      "role": "parent", "site": "bob", "project": null,
+      "model": "STRONGEST MODEL AVAILABLE TO THEM", "runtime": "claude-code",
+      "home": "/absolute/path/on/bobs/machine",
+      "description": "Bob's supervising agent — lives on Bob's machine"
+    },
+    "api-bob": {
+      "role": "child", "site": "bob", "project": "api",
+      "model": "TIER MODEL", "runtime": "claude-code",
+      "home": "/absolute/path/on/bobs/machine/api",
+      "description": "Bob's seat on the same repo — a peer of api-alice"
     }
   }
 }
