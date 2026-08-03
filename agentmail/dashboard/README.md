@@ -54,6 +54,22 @@ reason, never a state. Losing sight of something makes it **unknown**, never
 **down**. Carrying a last-known value forward as if it were fresh is the
 cardinal sin of this panel.
 
+### Seats on another machine
+
+A federated roster contains seats that live on someone else's laptop. Every
+local probe — the process table, the watcher, the working directory, CPU, git
+— is **silent** about those, and reading that silence as a fault is the one
+thing this page must never do. So a remote seat gets:
+
+- liveness `remote`, in its own **REMOTE — FOGGED** bucket, ranked below idle;
+- composite `Remote`, never `Dark` and never `Unknown`;
+- no CPU probe, no repository checks, no signal disagreements, **no alerts**;
+- and no "no watcher, therefore deaf" — its watcher runs on its own machine.
+
+What *is* still observable is its mail, because the spool is synced: a remote
+seat with a genuinely old queue still raises the alarm, since queue depth is a
+fact about files that arrived here. Fogged does not mean blind.
+
 ## Nothing about any particular site is written into this code
 
 Every name — the human, the site, seat ids, projects, the seat-id suffix
@@ -108,6 +124,20 @@ clock, never the snapshot's:
   contents. A delivery that died half-written is invisible to every other tool
   in this network; that is exactly why it is counted here.
 
+## Reading it
+
+Panels **collapse when you click their title** and **reorder when you drag the
+⠿ handle** (or focus it and press alt with the arrow keys). Your arrangement is
+remembered in this browser. On a first visit only the three panels a human is
+answerable for are open — waiting, seats, alerts — and the six evidence panels
+start shut, which is the difference between a 2,800px page and a 12,600px one.
+
+All of that is **view state only**: theme, order, what is open, column sorting
+and the pair-matrix filter. Not one control touches a seat, a maildir, a
+repository or a process. There is deliberately no button that sends mail, kills
+a session or edits the board — a page that reports on a system should not also
+be able to disturb it. Every action it suggests is a command you run yourself.
+
 ## Panels
 
 | # | panel | what it answers |
@@ -148,6 +178,15 @@ occupancy (including "on-cadence is not working" and "spinning needs burn *and*
 silence"), the depth derivative, composite precedence, roster-derived identity,
 both debt kinds, cycle detection, triage ordering, and the page contract —
 balanced tags, self-containment, and "a page is always produced".
+
+## Related tools
+
+- `agentmail/bin/network-snapshot` — the collector. One JSON document
+  describing the live network; the dashboard is a rendering of it, and
+  `--json` lets you render a saved one.
+- `agentmail/bin/agentmail-launch` — starts the seats this page then observes.
+  The roster is intent, the running argv is reality, and the dashboard flags
+  the two when they disagree.
 
 ## Requirements
 
