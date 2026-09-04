@@ -83,7 +83,7 @@ def ancestors(path: str) -> list[str]:
 
 
 # How far to look sideways for an existing org root. Two levels — the
-# project's own parent and its grandparent — covers ~/work/circle finding
+# project's own parent and its grandparent — covers ~/work/project-a finding
 # ~/work/iac-org and ~/iac-org, and stops well short of crawling /Users or $HOME.
 # A wider search is not "more helpful": it finds unrelated directories by luck
 # and adopts a project into somebody else's network. Anything further away must

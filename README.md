@@ -49,11 +49,11 @@ tells you what a network over this folder would look like.
 ### Already working inside a project?
 
 You don't have to start from a clean folder. If you're in the middle of a repo
-— say `~/work/circle` — and you want this, hand the repo to the agent already
+— say `~/work/project-a` — and you want this, hand the repo to the agent already
 running there:
 
 > I want to set up the IAC network from `https://github.com/Ramesh-Giri/IAC-protocol`.
-> I'm currently inside the `circle` project. Run `agentmail-adopt` first, show
+> I'm currently inside the `project-a` project. Run `agentmail-adopt` first, show
 > me the plan, and once I agree, move this project into an org root and follow
 > `agentmail/SETUP_PROMPT.md`.
 
@@ -66,18 +66,18 @@ agentmail/bin/agentmail-adopt --apply  # do it
 ```
 
 **The second project joins the first one's org root.** Run the same thing from
-inside `~/work/skyzai` later and it finds the `iac-org` that already exists and
-moves `skyzai` in beside `circle` — it does not create a rival network. It
+inside `~/work/project-b` later and it finds the `iac-org` that already exists and
+moves `project-b` in beside `project-a` — it does not create a rival network. It
 searches ancestors and two levels sideways, and always prints where it looked.
 
 ```
 before                          after
-~/work/circle                   ~/work/iac-org/agentmail/
-~/work/skyzai                   ~/work/iac-org/circle/
-                                ~/work/iac-org/skyzai/
+~/work/project-a                ~/work/iac-org/agentmail/
+~/work/project-b                ~/work/iac-org/project-a/
+                                ~/work/iac-org/project-b/
 ```
 
-**Name it whatever you like.** `--name vaibhav-hub`, or just clone into any
+**Name it whatever you like.** `--name my-hub`, or just clone into any
 folder name — nothing keys off it. The tools find their own root by walking up
 until they see `agentmail/bin/`, so `iac-org`, `my-org` and
 `totally-different-name` all work identically.
