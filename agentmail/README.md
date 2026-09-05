@@ -22,6 +22,13 @@ follow-ups adapt to the developer; declining creates no context files.
 See the [worked web example](examples/web/README.md) for six filled-in
 documents; its stack and design are illustrative, not IAC defaults.
 
+Start solo with local `.agent-mail/`. When adding teammates, follow
+[TEAM_SETUP.md](TEAM_SETUP.md): create a separate private `.team-mail/`
+channel with approval and share its connection through `iac-team.json` in
+your IAC fork. A teammate's setup agent reads that descriptor and configures
+the shared clone after confirming membership/access. Existing local mail
+is not uploaded, and an ordinary Git clone does not execute onboarding.
+
 AgentMail lets multiple AI coding agents (Claude Code sessions or similar),
 each owning a different repository, coordinate like processes on an operating
 system: durable message passing, live wake-ups, and a supervisor hierarchy —

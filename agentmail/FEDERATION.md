@@ -1,5 +1,14 @@
 # Federation — one mail network across machines and developers
 
+For the agent-led **solo → team → share your fork** workflow, start with
+[TEAM_SETUP.md](TEAM_SETUP.md). New setups keep local `.agent-mail/` separate
+from private shared `.team-mail/`, with an optional `iac-team.json` connection
+descriptor in the fork. The examples below describe the original single
+shared-spool model using `.agent-mail/`; the same transport works at
+`.team-mail/` with explicit `-d` arguments. Preserve existing deployments.
+Two roots do not bridge automatically: one main session reviews and relays
+approved handoffs. Run sync only on the chosen shared root.
+
 For 1.1 rollout and recovery, read [UPGRADE.md](UPGRADE.md). Automated sync
 requires a **dedicated mail-only Git repository**, not a directory nested
 inside a product repository. Keep the toolkit outside that repository.
@@ -157,8 +166,9 @@ recipients from the roster's `project` field).
 
 You do not need to import old correspondence to start collaborating. For a
 new team channel, use one **private, mail-only repository**, cloned into each
-workspace's `.agent-mail/`. Start with the approved roster, empty maildirs,
-and a short current-context handoff. Old personal mail can stay private and
+workspace's `.team-mail/` when preserving separate local mail. Start with the
+approved roster, empty maildirs, and a short current-context handoff.
+Old personal mail can stay private and
 local; copy selected historical material only after an explicit review.
 
 An ordinary local folder is sufficient for agents on one machine, but does
@@ -178,7 +188,8 @@ Use the agent-led [setup procedure](SETUP_PROMPT.md), not a fresh network
 template. The new developer asks their agent to clone and set up IAC. It asks
 for the workspace name/location before cloning, or preserves the name of an
 existing manual clone. Next it collects the selected project URLs or local
-paths and the private team-mail URL. It clones only that selected code and
+paths and checks `iac-team.json` for the private team-mail URL before asking
+for missing information. It clones only that selected code and
 joins the shared mail repository.
 
 The inviter grants access and arranges roster-owner-approved registration:

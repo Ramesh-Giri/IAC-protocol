@@ -89,6 +89,28 @@ class Protocol(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.send()
 
+    def test_one_bound_main_can_send_to_two_explicit_roots_without_mirroring(self):
+        team = Path(self.temp.name) / "team-mail"
+        subprocess.run(["bash", str(BASE / "bin" / "agentmail-init"),
+                        "a", "remote", "-d", str(team)],
+                       env=self.env, check=True, capture_output=True, timeout=10)
+        self.env.update(AGENTMAIL_SEAT="a", AGENTMAIL_DIR=str(self.root))
+        local = self.cli("mail-send", "--from", "a", "--to", "b",
+                         "--subject", "Local only", "-m", "Private project discussion")
+        shared = self.cli("mail-send", "--from", "a", "--to", "remote",
+                          "--subject", "Team handoff", "-m", "Approved summary", root=team)
+        self.assertEqual(local.returncode, 0, local.stderr)
+        self.assertEqual(shared.returncode, 0, shared.stderr)
+        local_files = self.files("b")
+        team_files = list((team / "remote" / "new").glob("*.md"))
+        self.assertEqual(len(local_files), 1)
+        self.assertEqual(len(team_files), 1)
+        self.assertIn("Private project discussion", local_files[0].read_text())
+        self.assertNotIn("Private project discussion", team_files[0].read_text())
+        self.assertIn("Approved summary", team_files[0].read_text())
+        self.assertFalse((team / "b").exists())
+        self.assertFalse((self.root / "remote").exists())
+
     def test_symlink_maildir_is_rejected(self):
         (self.root / "b" / "tmp").rmdir()
         (self.root / "b" / "tmp").symlink_to(self.root / "a" / "tmp")

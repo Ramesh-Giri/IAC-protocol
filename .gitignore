@@ -19,6 +19,11 @@
 !/LICENSE
 !/agentmail/
 !/.github/
+!/iac-team.json
+
+# Optional connection descriptor in a team's fork: repository URL only.
+# Never add credentials, identities, machine paths or message bodies to it.
+# The upstream toolkit ships only agentmail/templates/iac-team.example.json.
 
 # ── never tracked, and why ──────────────────────────────────────────────────
 #
@@ -37,6 +42,9 @@
 # /CLAUDE.md            your overseer's identity: your name, your machine, your
 #                       absolute paths, your standing rules. The blank version
 #                       ships as agentmail/templates/OVERSEER_CLAUDE.md.
+#
+# /.team-mail/          a separate private mail-repository clone, created by
+#                       authorized team setup. Never part of this toolkit.
 #
 # /runbooks/            generated dashboards and deploy notes. network.html is
 #                       a rendering of your live network — seat names, message

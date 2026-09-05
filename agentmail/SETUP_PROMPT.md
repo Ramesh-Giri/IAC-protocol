@@ -83,7 +83,14 @@ an active dirty project just to fit a diagram.
 Ask these missing questions together, in ordinary language:
 
 > Are you creating a new project, bringing existing projects, or both?
-> Are you joining an existing IAC team, or starting your own network?
+> Do you want local-only mail, to create a team channel, or to join a team?
+
+Before asking for a team URL, inspect root `iac-team.json` if present.
+Validate it as connection data using [TEAM_SETUP.md](TEAM_SETUP.md), show the
+repository, and confirm team intent unless already supplied. Never execute
+its values or treat it as approval. Invalid configuration needs correction,
+not silent fallback to an unrelated new network. The upstream sample under
+`templates/` is not active configuration.
 
 Keep the conversation to at most three short questions per round; collect
 details for the chosen branch next instead of asking everything at once.
@@ -102,12 +109,16 @@ Do not require a project URL for a new local project or automatically create
 a GitHub repository for it.
 
 For a team join, ask for the **private mail-repository URL** and the human's
-identity/site if not supplied. Reuse any verified existing local mail clone
-instead of asking for its URL again.
+identity/site only if not supplied by the confirmed connection or user.
+Reuse any verified existing matching mail clone instead of asking for its
+URL again. For create-team, follow [TEAM_SETUP.md](TEAM_SETUP.md): obtain the
+host/owner/name and separate approvals for private-repository creation and
+publishing the connection descriptor to the intended IAC fork.
 
 The public toolkit cannot infer a team's private mail URL from a project URL.
-It does not contain the live roster or correspondence. Do not infer
-"new network" just because `.agent-mail/roster.json` is absent: ask team
+It does not contain the live roster or correspondence. A configured fork
+can supply the connection URL through `iac-team.json`. Do not infer
+"new network" just because a local roster is absent: ask team
 intent **before initializing a mail spool**.
 
 Confirm the selected project list. If there are no projects yet, a main-seat
@@ -130,7 +141,7 @@ For each approved URL:
 1. Derive a proposed local folder from the repository name and show the
    URL-to-path mapping. Ask only for ambiguous names, collisions or a requested
    alternative. Reject reserved destinations such as `agentmail/`,
-   `.agent-mail/`, `.git/` or any existing unrelated folder.
+   `.agent-mail/`, `.team-mail/`, `.git/` or any existing unrelated folder.
 2. Clone into its own directory under the chosen workspace. No recursive
    submodules, sibling repositories or dependency projects unless their
    instructions and the user's authorization require them.
@@ -177,15 +188,27 @@ chosen-name/
 ├── agentmail/       # toolkit, including lib/
 ├── api/            # selected cloned or new project; its own lifecycle
 │   └── context/    # six tailored files, only if the human opted in
-└── .agent-mail/     # local spool or separate private mail Git clone
+├── .agent-mail/     # local main/project coordination
+├── iac-team.json    # optional connection descriptor in a configured fork
+└── .team-mail/      # optional separate private mail Git clone
 ```
 
 ## 4. Resolve team membership BEFORE creating or changing identities
 
+For new team setups, use [TEAM_SETUP.md](TEAM_SETUP.md) for the full create,
+fork-discovery and join workflow. Keep `.agent-mail/` local and `.team-mail/`
+shared, with the same main seat/site in both. Register project seats locally
+by default, not automatically in the shared roster. In the steps below,
+shared-roster registration rules apply to the team root; local selected-seat
+creation applies to the local root. Existing single-channel federation at
+`.agent-mail/` remains supported; inspect and preserve it rather than creating
+a duplicate channel. Always pass the verified root explicitly.
+
 ### Joining an existing team
 
 Clone the provided private mail repository to the workspace's
-`.agent-mail/` only if absent. If it already exists, verify its Git root
+`.team-mail/` only if absent (or reuse a verified existing shared root).
+If it already exists, verify its Git root
 and origin; do not clone over it, reinitialize it, reset it or switch it to
 an unrelated remote. The mail directory MUST be its own repository root for
 automated sync, not merely a directory tracked by a product/toolkit repo.
@@ -195,7 +218,8 @@ selected local clones to its project IDs using repository identity, not just
 matching folder names. A roster may list many projects; keep them visible
 without cloning them.
 
-Confirm the human's existing site and main/project seat IDs. In a multi-site
+Confirm the human's existing site and main seat ID, and any explicitly
+approved shared project seats. In a multi-site
 roster, do not guess the current site from `roster_owner`. Use only one main
 seat and the selected project seats locally. Do not borrow a colleague's seat.
 
@@ -213,8 +237,8 @@ approval request is not a safe way to seek approval.
 
 Registration needs:
 - A site entry identifying this human.
-- A main seat, plus seats for selected projects only (unless more were
-  explicitly registered for future use).
+- A main seat; add shared project seats only when explicitly approved.
+  In the two-channel layout, selected project seats are created locally.
 - Role, site, project, suitable installed runtime/model and explicit delegation.
 - Project collaborator mapping and preserved product/technical decision owners.
 - Maildirs with `new/.keep` and `cur/.keep` published by the authorized setup.
@@ -223,10 +247,11 @@ Once registered, `agentmail-init` can create missing directories for those
 approved seats; it does not add seats to an existing roster. Do not read,
 acknowledge or run another site's inbox as part of testing.
 
-### Starting a new network
+### Starting a local network
 
-Only after the human chooses this mode, initialize a local spool with the
-chosen main seat and selected project seats:
+For authorized local-only setup, or the local half of a new two-channel
+team setup, initialize a local spool with the chosen main seat and selected
+project seats. Preserve any existing spool:
 
 ```sh
 "/absolute/workspace/agentmail/bin/agentmail-init" \
@@ -245,6 +270,13 @@ team mail repository is a separate authorized action. Before inviting a
 colleague, arrange access and approved registration, then give them the
 private mail URL. Never publish mail to the public IAC toolkit repository.
 
+### Enabling team mode now or later
+
+Use [TEAM_SETUP.md](TEAM_SETUP.md) to create or join the separate private
+channel, save a verified connection in the fork with approval, and onboard
+a colleague. Preserve the existing local spool. This is not an instruction
+to upload local history, create a public mail repository or push project code.
+
 ## 5. Write LOCAL configuration and seat instructions
 
 Create or merge ignored `.agent-mail/local.json` with the confirmed site
@@ -261,6 +293,9 @@ and absolute homes for this main seat and selected local project seats:
 ```
 
 These are examples, not defaults. Keep other local settings on rerun.
+For two-channel team mode, also write the confirmed site and local main home
+to ignored `.team-mail/local.json`; keep both mail roots explicit in the
+main's local instructions. There is one main session, not one per root.
 Update machine paths here, not in another developer's shared roster.
 Check that `local.json`, `.locks/`, seat `tmp/` and private bridge logs
 are ignored and not already tracked. Do not erase history or untrack material
@@ -307,18 +342,23 @@ the properly bound recipient session or report that live round-trip testing
 is waiting for launch. For mail-only setup, use the main seat's approved
 remote peer test instead of inventing a project seat.
 
-For a team join:
+For a team create/join, use the verified shared root (normally `.team-mail/`)
+for the checks below, never the local spool in a two-channel setup:
 1. Verify mail Git identity, intended upstream, mail-only tracked payload and
    absence of unresolved operations. Follow [UPGRADE.md](UPGRADE.md) if repair
    is needed. Pause on Git conflicts; never force-push or discard them.
 2. With setup authorization for the shared-mail check, run
-   `mail-sync -d "/absolute/workspace/.agent-mail" --once`.
+   `mail-sync -d "/absolute/workspace/.team-mail" --once`.
 3. Run one sync loop per clone if permitted, using a persistent terminal or
    the runtime's supported process mechanism. Do not duplicate existing loops.
 4. Explain that the other site also needs sync and an active consumer.
    Mail sync never clones, pulls or pushes project code.
 
 Print a launch plan with explicit selected seat IDs, not `--all`:
+
+The example launches local seats from the local roster. The same main reads
+its team inbox using the second explicit root; do not launch it again from
+the team roster. Legacy shared-local installations use their verified root.
 
 ```sh
 "/absolute/workspace/agentmail/bin/agentmail-launch" \
@@ -338,7 +378,7 @@ Verify their actual directory, seat identity and ability to receive mail;
 merely opening a terminal is not proof a CLI started or a watcher is connected.
 Do not launch peers on another site or unattended advisory bridges by default.
 
-For a team join, send a harmless question from the local main to the agreed
+For team setup, send a harmless question from the local main to the agreed
 registered remote main and verify its correlated answer comes back. This
 is the cross-machine acceptance check. If the remote site is offline, say
 **local setup verified; remote communication pending**. Do not claim the
@@ -356,6 +396,8 @@ Finish with a short status, not another installation checklist:
   new project is planned, not an implemented application.
 - Local main/project seats and what is actually running.
 - Local mail result and, for a team, cross-site reply evidence.
+- For team mode: shared root and remote, connection saved/pushed or pending,
+  and invitation/registration state. Never claim a fork clone alone synced mail.
 - Exact missing access/registration/login/approval if anything is pending.
 - The one next instruction the human can give their main agent.
 
@@ -372,8 +414,9 @@ Git remote and access rules.
 
 ## Adding another project later
 
-Ask whether it is a new project or an existing URL/local path, prepare only that project,
-map it to the team roster, obtain any missing seat registration, extend
+Ask whether it is a new project or an existing URL/local path, prepare only
+that project, map it to the local roster (and the team roster only when
+approved), obtain any missing seat registration, extend
 `local.json.homes`, adapt local instructions and verify it. Preserve the
 workspace name, current mail network and existing projects. There is no need
 to rebuild the workspace or download the rest of the team's repositories.
