@@ -14,6 +14,14 @@ whole directory, including `lib/`. The [SPEC](SPEC.md) defines actual guarantees
 > are bundled or cloned by default; one or two are enough. It keeps a manual
 > clone's name and reports pending access/registration instead of claiming ready.
 
+New projects need no repository URL. Setup also offers an optional
+[project-context interview](PROJECT_CONTEXT.md): six tailored Markdown files
+in the selected project's `context/`, covering scope, architecture, code/UI
+standards, agent workflow and evidence-backed progress. Web/mobile/other
+follow-ups adapt to the developer; declining creates no context files.
+See the [worked web example](examples/web/README.md) for six filled-in
+documents; its stack and design are illustrative, not IAC defaults.
+
 AgentMail lets multiple AI coding agents (Claude Code sessions or similar),
 each owning a different repository, coordinate like processes on an operating
 system: durable message passing, live wake-ups, and a supervisor hierarchy —
