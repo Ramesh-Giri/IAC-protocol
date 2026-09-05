@@ -90,7 +90,7 @@ class TestDebtsAndGraph(unittest.TestCase):
         M = self.build(seats=seats, threads=threads)
         self.assertEqual(M["debts"][0]["kind"], "not-even-read")
 
-    def test_a_reply_cycle_is_reported_as_a_deadlock(self):
+    def test_a_reply_cycle_is_reported_as_possible_not_proven_deadlock(self):
         seats = [seat("a-acme"), seat("b-acme")]
         threads = [
             {"thread": "t1", "message_count": 1, "last_message_from": "a-acme", "last_message_to": "b-acme",
@@ -105,7 +105,31 @@ class TestDebtsAndGraph(unittest.TestCase):
         M = self.build(seats=seats, threads=threads)
         self.assertTrue(M["cycles"], "a mutual wait must be reported as a cycle")
         self.assertEqual(M["cycle_seats"], {"a-acme", "b-acme"})
-        self.assertTrue(any("DEADLOCK" in a["title"] for a in M["alerts"]))
+        self.assertTrue(any("POSSIBLE WAIT CYCLE" in a["title"] for a in M["alerts"]))
+        self.assertFalse(any("DEADLOCK" in a["title"] for a in M["alerts"]))
+
+    def test_notifications_create_no_reply_debt(self):
+        for m in ({"type": "info", "ack": "none"}, {"type": "task", "expects_reply": False}):
+            flow = [dict(m, id="r1", thread="t", **{"from": "a", "to": "b", "timestamp": "2026-08-03T09:00:00Z"})]
+            self.assertFalse(self.build(flow=flow)["debts"])
+
+    def test_only_correlated_recipient_response_clears_request(self):
+        request = {"id": "r1", "from": "a", "to": "b", "thread": "t", "type": "task",
+                   "timestamp": "2026-08-03T09:00:00Z"}
+        response = {"id": "r2", "from": "b", "to": "a", "thread": "t", "type": "report",
+                    "in_reply_to": "r1", "timestamp": "2026-08-03T10:00:00Z"}
+        for changes in ({"from": "c"}, {"in_reply_to": "different"}, {"type": "ack"}):
+            self.assertEqual(len(self.build(flow=[request, dict(response, **changes)])["debts"]), 1)
+        self.assertFalse(self.build(flow=[request, response])["debts"])
+
+    def test_same_second_requests_do_not_collapse(self):
+        request = {"from": "a", "to": "b", "thread": "t", "type": "task", "timestamp": "2026-08-03T09:00:00Z"}
+        self.assertEqual(len(self.build(flow=[dict(request, id="r1"), dict(request, id="r2")])["debts"]), 2)
+
+    def test_legacy_filename_reply_works_without_thread(self):
+        request = {"from": "a", "to": "b", "type": "task", "file": "legacy.md", "timestamp": "2026-08-03T09:00:00Z"}
+        response = {"from": "b", "to": "a", "type": "report", "in_reply_to": "legacy.md", "timestamp": "2026-08-03T10:00:00Z"}
+        self.assertFalse(self.build(flow=[request, response])["debts"])
 
     def test_no_debt_no_graph(self):
         M = self.build(seats=[seat("a-acme")])

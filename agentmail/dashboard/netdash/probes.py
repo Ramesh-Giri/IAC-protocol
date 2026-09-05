@@ -167,6 +167,8 @@ def maildir_scan(mail_root: str, seat_id: str) -> dict:
     try:
         for n in os.listdir(os.path.join(base, "tmp")):
             p = os.path.join(base, "tmp", n)
+            if os.path.isdir(p):
+                continue  # bridge retry receipts are intentional local state
             ep = file_mtime(p)
             if ep is not None and (out["read_at"] - ep) > TMP_STRANDED_SECONDS:
                 out["tmp_stranded"].append({"name": n, "epoch": ep})

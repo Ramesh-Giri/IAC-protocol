@@ -1,0 +1,7 @@
+{
+  "site": "bob",
+  "homes": {
+    "overseer-bob": "/absolute/local/path/to/org",
+    "api-bob": "/absolute/local/path/to/org/api"
+  }
+}

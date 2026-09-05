@@ -1,5 +1,12 @@
 # Orchestration — the supervision tree
 
+**1.1 implementation note:** this is a coordination policy, not a sandbox.
+Use [SPEC.md](SPEC.md), [UPGRADE.md](UPGRADE.md) and [HANDOFFS.md](HANDOFFS.md)
+for actual helper behavior and domain-specific decision ownership. The main
+agent coordinates product and technical owners; it is not universally above
+both. Research/attachments do not authorize implementation or agent spawning.
+Routine actions within existing delegation need no extra approval ceremony.
+
 How to run a fleet of AI coding agents so that **the user talks to exactly
 one agent** and everything else happens autonomously, safely, out of sight.
 
@@ -21,10 +28,10 @@ one agent** and everything else happens autonomously, safely, out of sight.
 ### Children (workers)
 - One per repository. A child NEVER edits outside its repo — repo ownership
   is the isolation boundary, like actor state.
-- Run **autonomously** (no interactive permission prompts — e.g. Claude
-  Code's `--dangerously-skip-permissions` or `--permission-mode
-  bypassPermissions`), which is only acceptable because of the guardrails
-  in §5. Autonomy without guardrails is negligence.
+- Run with normal runtime permissions by default. Unattended permission
+  bypass requires explicit authorization and separately verified runtime/OS
+  safeguards; Markdown instructions do not enforce isolation. The launcher
+  supports explicit Claude-worker bypass, but never enables it by default.
 - Model tier assigned by the parent (§3) via the roster or per-task.
 - Report by mail: `ack` on pickup, `progress` at milestones, `blocked` with
   a precise need, `done` with verification evidence (test output, commit

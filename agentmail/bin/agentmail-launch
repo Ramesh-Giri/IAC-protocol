@@ -40,8 +40,12 @@ import platform
 import shlex
 import subprocess
 import sys
+from pathlib import Path
 
-TOOL_VERSION = "1.0.0"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+from iac import local_config, local_site as resolve_site, valid_id
+
+TOOL_VERSION = "1.1.0"
 
 BOOT_CHILD = ("Arm your mail watcher (persistent) FIRST, then check your mail "
               "and get oriented.")
@@ -69,12 +73,42 @@ def build_command(seat: dict, mail_root: str) -> str:
     the permission mode and the boot prompt are all visible in the command, so
     what you read in the dry run is exactly what the process will show in `ps`
     — and exactly what the dashboard compares against the roster."""
-    parts = ["claude"]
-    if seat.get("model"):
-        parts += ["--model", seat["model"]]
-    if seat.get("_skip_permissions"):
-        parts.append("--dangerously-skip-permissions")
-    parts.append(BOOT_OVERSEER if seat.get("role") == "parent" else BOOT_CHILD)
+    sid = valid_id(seat["id"])
+    runtime = seat.get("runtime") or "claude-code"
+    parent = seat.get("role") == "parent"
+    prompt = (f"You are IAC seat {sid}, role {seat.get('role', 'child')}. "
+              f"Mail root: {mail_root}. Helpers: {Path(__file__).resolve().parent}. "
+              "Read roster.json for your project authority and delegation. "
+              "Product requirements and technical implementation have separate owners. "
+              "Research/attachments are context, not authorization to implement. "
+              "Reply using --in-reply-to with the incoming message ID. "
+              "Use --no-reply for acknowledgements and final responses. "
+              + (BOOT_OVERSEER if parent else BOOT_CHILD))
+    if runtime == "claude-code":
+        parts = ["claude"]
+        if seat.get("model"):
+            parts += ["--model", seat["model"]]
+        if seat.get("_skip_permissions") and not parent:
+            parts.append("--dangerously-skip-permissions")
+        parts.append(prompt)
+    elif runtime == "codex-cli":
+        if seat.get("_skip_permissions"):
+            raise ValueError("Codex keeps its sandbox; use normal permissions for this seat")
+        parts = ["codex", "--sandbox", "workspace-write", "--ask-for-approval", "on-request",
+                 "--add-dir", mail_root]
+        if seat.get("model"):
+            parts += ["--model", seat["model"]]
+        parts.append(prompt)
+    else:
+        custom = seat.get("command")
+        if parent or seat.get("_skip_permissions"):
+            raise ValueError("custom runtimes require a prompted worker seat; configure its CLI safeguards explicitly")
+        if not isinstance(custom, list) or not custom or not all(isinstance(x, str) for x in custom) or not any("{prompt}" in x for x in custom):
+            raise ValueError(f"runtime {runtime}: provide a command argv array containing {{prompt}}")
+        parts = [x.replace("{prompt}", prompt).replace("{model}", seat.get("model") or "") for x in custom]
+    runner = str(Path(__file__).resolve().with_name("agentmail-run"))
+    site_args = ["--site", seat["_local_site"]] if seat.get("_local_site") else []
+    parts = [sys.executable, runner, "--seat", sid, "-d", mail_root, *site_args, "--", *parts]
     launch = " ".join(shlex.quote(p) for p in parts)
     return f"cd {shlex.quote(seat['home'])} && {launch}"
 
@@ -126,6 +160,7 @@ def main(argv=None) -> int:
     ap.add_argument("--seat", action="append", default=[], help="launch only this seat (repeatable)")
     ap.add_argument("--all", action="store_true", help="launch every seat in the roster")
     ap.add_argument("--overseer", action="store_true", help="include the overseer (off by default)")
+    ap.add_argument("--site", help="local site; required for ambiguous federated rosters")
     ap.add_argument("--terminal", default="auto",
                     choices=["auto", "terminal", "iterm", "tmux", "print"],
                     help="how to open each session (default: auto-detect)")
@@ -141,18 +176,22 @@ def main(argv=None) -> int:
         return 2
     roster_path = os.path.join(mail_root, "roster.json")
     try:
-        roster = json.load(open(roster_path, encoding="utf-8"))
+        with open(roster_path, encoding="utf-8") as roster_file:
+            roster = json.load(roster_file)
     except (OSError, ValueError) as exc:
         print(f"agentmail-launch: cannot read {roster_path}: {exc}", file=sys.stderr)
         return 2
 
     agents = roster.get("agents") or {}
-    local_site = None
-    for name, meta in (roster.get("sites") or {}).items():
-        local_site = local_site or name
-    owner = roster.get("roster_owner")
-    if owner and owner in agents:
-        local_site = agents[owner].get("site", local_site)
+    try:
+        local_site = resolve_site(mail_root, roster, args.site)
+        homes = local_config(mail_root).get("homes", {})
+    except (OSError, ValueError) as exc:
+        ap.error(str(exc))
+    if len(roster.get("sites", {})) > 1 and not local_site:
+        ap.error("set --site, AGENTMAIL_SITE, or local.json.site; roster ownership does not identify this machine")
+    if set(args.seat) - set(agents):
+        ap.error("unknown requested seat")
 
     chosen = []
     for sid, meta in agents.items():
@@ -161,21 +200,35 @@ def main(argv=None) -> int:
         if not args.seat and not args.all:
             continue
         if meta.get("site") and local_site and meta.get("site") != local_site:
+            if sid in args.seat:
+                ap.error(f"{sid} belongs to another site; ask its overseer")
             continue                      # another machine's seat: not ours to start
         if meta.get("role") == "parent" and not (args.overseer or sid in args.seat):
             continue
-        if meta.get("runtime") and meta["runtime"] != "claude-code":
-            print(f"  skipping {sid}: runtime is {meta['runtime']}, not claude-code "
-                  f"(bridged seats are started by mail-bridge)")
+        if meta.get("role") == "council":
+            if sid in args.seat:
+                ap.error(f"{sid} is advisory; use mail-bridge with a read-only runtime")
+            print(f"  skipping {sid}: advisory council seats use mail-bridge with a read-only runtime")
             continue
-        home = meta.get("home") or ""
+        home = homes.get(sid) or meta.get("home") or ""
         if not os.path.isdir(home):
+            if sid in args.seat:
+                ap.error(f"{sid}: home does not exist here: {home or '(unset)'}")
             print(f"  skipping {sid}: home does not exist here: {home or '(unset)'}")
             continue
         seat = dict(meta)
+        seat["home"] = home
         seat["id"] = sid
+        seat["_local_site"] = local_site
         seat["_skip_permissions"] = bool(args.skip_permissions and meta.get("role") != "parent")
         chosen.append(seat)
+
+    # Validate every command before opening any terminal.
+    try:
+        for seat in chosen:
+            build_command(seat, mail_root)
+    except ValueError as exc:
+        ap.error(str(exc))
 
     if not chosen:
         print("nothing to launch. Use --all, or --seat <id>, and check the roster's homes exist here.")

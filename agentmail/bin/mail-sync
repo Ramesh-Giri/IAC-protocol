@@ -1,71 +1,89 @@
-#!/usr/bin/env bash
-# mail-sync — git federation daemon (FEDERATION.md §3).
-# Commits local mail, pulls remote mail (rebase), pushes. Dumb by design:
-# moves files, never reads them. Run persistently, or --once for cron/tests.
-#
-# Usage: mail-sync [-d MAIL_DIR] [-i INTERVAL_SECONDS] [--once]
-set -euo pipefail
+#!/usr/bin/env python3
+"""Synchronize a dedicated mail Git repository, never a nested product channel."""
+import os
+from pathlib import Path
+import re
+import signal
+import subprocess
+import sys
+import time
 
-MAIL_DIR="${AGENTMAIL_DIR:-.agent-mail}"
-INTERVAL=30
-ONCE=0
-while [ $# -gt 0 ]; do
-  case "$1" in
-    -d) MAIL_DIR="$2"; shift 2;;
-    -i) INTERVAL="$2"; shift 2;;
-    --once) ONCE=1; shift;;
-    *) echo "usage: mail-sync [-d dir] [-i seconds] [--once]" >&2; exit 2;;
-  esac
-done
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+from iac import LOCAL_IGNORES, atomic_write, lock, parser, roster, run_bounded
 
-git -C "$MAIL_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
-  echo "mail-sync: $MAIL_DIR is not a git repository (see FEDERATION.md)" >&2; exit 1; }
 
-# tmp/ must never travel between machines
-GI="$MAIL_DIR/.gitignore"
-grep -qxF '*/tmp/*' "$GI" 2>/dev/null || printf '*/tmp/*\n' >> "$GI"
+def git(root, timeout, *args, check=True):
+    result = run_bounded(["git", "-C", str(root), *args], timeout=timeout,
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                         env=dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_EDITOR="true"))
+    if check and result.returncode:
+        raise RuntimeError(f"git {args[0]} failed (exit {result.returncode}); inspect repository/upstream before retrying")
+    return result
 
-# First-run bootstrap: a fresh clone (possibly of an empty remote) has no
-# upstream. Seed the remote if it's empty; otherwise adopt its branch.
-ensure_upstream() {
-  git -C "$MAIL_DIR" rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1 && return 0
-  git -C "$MAIL_DIR" fetch -q origin 2>/dev/null || true
-  local rb
-  rb="$(git -C "$MAIL_DIR" ls-remote --symref origin HEAD 2>/dev/null \
-        | sed -n 's|^ref: refs/heads/\(.*\)	HEAD$|\1|p')"
-  if [ -n "$rb" ] && git -C "$MAIL_DIR" rev-parse "origin/$rb" >/dev/null 2>&1; then
-    if git -C "$MAIL_DIR" rev-parse HEAD >/dev/null 2>&1; then
-      git -C "$MAIL_DIR" checkout -q -B "$rb"          # keep local commits
-    else
-      git -C "$MAIL_DIR" checkout -q -B "$rb" "origin/$rb"   # empty clone: adopt
-    fi
-    git -C "$MAIL_DIR" branch -q --set-upstream-to="origin/$rb" 2>/dev/null || true
-  else
-    git -C "$MAIL_DIR" push -q -u origin HEAD 2>/dev/null || true   # we seed
-  fi
-}
 
-sync_cycle() {
-  local host; host="$(hostname -s 2>/dev/null || echo local)"
-  # 1. commit local changes first, so rebase never touches dirty files
-  git -C "$MAIL_DIR" add -A
-  if ! git -C "$MAIL_DIR" diff --cached --quiet 2>/dev/null; then
-    git -C "$MAIL_DIR" commit -q -m "mail: $host $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  fi
-  ensure_upstream
-  # 2. receive (rebase works even for unrelated histories)
-  if git -C "$MAIL_DIR" rev-parse --abbrev-ref '@{u}' >/dev/null 2>&1; then
-    git -C "$MAIL_DIR" pull -q --rebase 2>/dev/null || {
-      echo "mail-sync: pull failed (offline? conflict?) — will retry" >&2; return 0; }
-  fi
-  # 3. publish, retrying once through a push race
-  if ! git -C "$MAIL_DIR" push -q -u origin HEAD 2>/dev/null; then
-    git -C "$MAIL_DIR" pull -q --rebase 2>/dev/null || true
-    git -C "$MAIL_DIR" push -q -u origin HEAD 2>/dev/null || \
-      echo "mail-sync: push failed — will retry next cycle" >&2
-  fi
-}
+def cycle(root, timeout):
+    # Guard before touching .gitignore, the index, or history.
+    top = Path(git(root, timeout, "rev-parse", "--show-toplevel").stdout.strip()).resolve()
+    if root != top:
+        raise ValueError("mail-sync requires a dedicated mail repository; embedded product channels use manual scoped commits")
+    roster(root)
+    git(root, timeout, "remote", "get-url", "origin")
+    with lock(root, "sync"), lock(root, "transport", wait=10):
+        gitdir = Path(git(root, timeout, "rev-parse", "--absolute-git-dir").stdout.strip())
+        if any((gitdir / x).exists() for x in ("rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD")):
+            raise RuntimeError("Git operation unresolved; resolve it manually before syncing")
+        # Whitelist the entire tracked payload, not just the directory name.
+        names = git(root, timeout, "ls-files", "-z", "--cached", "--others", "--exclude-standard").stdout.split("\0")
+        for name in filter(None, names):
+            allowed = name in ("roster.json", ".gitignore") or re.fullmatch(r"[a-z0-9][a-z0-9_-]*/(?:new|cur)/(?:[^/]+\.md|\.keep)", name) or re.fullmatch(r"archive/(?:[^/]+\.md|\.keep)", name)
+            local = name == "local.json" or name.startswith(".locks/") or re.fullmatch(r"[^/]+/(?:tmp/.*|bridge\.log)", name)
+            if local and not git(root, timeout, "ls-files", "--error-unmatch", name, check=False).returncode:
+                raise ValueError(f"machine-local state is tracked: {name}; untrack explicitly first")
+            if not allowed and not local:
+                raise ValueError(f"not a mail-only payload: {name}; nothing committed")
+        ignore = root / ".gitignore"
+        text = ignore.read_text() if ignore.exists() else ""
+        additions = [x for x in LOCAL_IGNORES if x not in text.splitlines()]
+        if additions:
+            atomic_write(ignore, text.rstrip() + "\n" + "\n".join(additions) + "\n")
+        git(root, timeout, "add", "--all", "--", ".")
+        if git(root, timeout, "diff", "--cached", "--quiet", check=False).returncode:
+            git(root, timeout, "commit", "-q", "-m", "mail: synchronize message and acknowledgement files")
+        tracking = git(root, timeout, "rev-parse", "--abbrev-ref", "@{u}", check=False).returncode == 0
+        if tracking:
+            git(root, timeout, "pull", "--rebase")
+        pushed = git(root, timeout, "push", "-u", "origin", "HEAD", check=False)
+        if pushed.returncode:
+            if not tracking:
+                raise RuntimeError("push rejected; configure the intended upstream explicitly (no branch rewriting)")
+            git(root, timeout, "pull", "--rebase")
+            git(root, timeout, "push", "origin", "HEAD")
 
-if [ "$ONCE" = 1 ]; then sync_cycle; exit 0; fi
-echo "mail-sync: syncing $MAIL_DIR every ${INTERVAL}s"
-while :; do sync_cycle; sleep "$INTERVAL"; done
+
+def main():
+    p = parser("mail-sync")
+    p.add_argument("--once", action="store_true")
+    p.add_argument("-i", "--interval", type=float, default=30)
+    p.add_argument("--timeout", type=float, default=45, help="maximum seconds per Git command")
+    args = p.parse_args()
+    if min(args.timeout, args.interval) <= 0:
+        p.error("timeout and interval must be positive")
+    root = Path(args.mail_root).resolve()
+    while True:
+        status = 0
+        try:
+            cycle(root, args.timeout)
+        except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as exc:
+            print(f"mail-sync: {exc}", file=sys.stderr, flush=True)
+            status = 1
+        if args.once:
+            return status
+        time.sleep(args.interval)
+
+
+if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        sys.exit(130)

@@ -1,5 +1,12 @@
 # The Council — setup and operations
 
+**1.1 bridge behavior:** only requests (`proposal`, `review`, etc., or explicit
+`--request-reply`) invoke the CLI. FYIs and closing notices are acknowledged
+without a model call. Replies carry `in_reply_to` and never request another
+automatic reply. Failures stay unread; retry is bounded. See
+[UPGRADE.md](UPGRADE.md) for `--once --retry-failed` recovery. Role text is
+advisory; configure the command's actual read-only sandbox before running it.
+
 Cross-model deliberation for consequential decisions. Concept in
 ORCHESTRATION.md §7; this page is the practical guide: setting up council
 seats, the commands, and the convening policy.
@@ -49,7 +56,8 @@ app can't be bridged — use the CLI for seats.
 Codex notes: `--skip-git-repo-check -C <workspace>` is required when the
 workspace isn't a git repo; if the CLI is older than your account's model
 you'll get a 400 in bridge.log — `npm i -g @openai/codex` fixes it. Bridge
-failures are visible in `<mail-dir>/<seat>/bridge.log`.
+failures go to stderr; redirect to `<mail-dir>/<seat>/bridge.log` if desired.
+Retry receipts live in the seat's ignored `tmp/bridge-state/` directory.
 
 ## 3. Convening — the commands
 

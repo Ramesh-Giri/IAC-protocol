@@ -3,144 +3,124 @@
 **A file-based protocol, supervision model and dashboard for running several
 AI coding agents — one per repository — as one accountable network.**
 
-Clone this folder, rename it to whatever you want, drop your projects inside,
-and paste one file into Claude Code. It reads *your* folder, proposes a
-network, asks you what it cannot know, and builds it.
+IAC also removes the human copy/paste relay between developers' agents:
+share research and Markdown, review it in context, agree on product and
+technical decisions, then hand scoped work to the appropriate project seats.
+Start with [research handoffs](agentmail/HANDOFFS.md).
 
-```
-your-org-root/            ← this repo, renamed to anything
-├── agentmail/            ← the toolkit
-├── api/                  ← your projects, dropped in (never tracked here)
-├── web/
-├── .agent-mail/          ← the mail spool, created by setup
-└── runbooks/network.html ← the dashboard, regenerated on demand
-```
+**IAC 1.1:** safer delivery, bounded bridge retries, seat locks, explicit reply
+IDs, local-site configuration, and Claude/Codex launch support. Existing users:
+read [the upgrade checklist](agentmail/UPGRADE.md) before replacing live helpers.
 
-No broker, no daemon, no database, no service to run. Agents coordinate
-through a shared directory; everything durable is a file you can read with
-`cat`.
+## Get started: let your agent do the setup
 
----
+You choose the workspace name and projects. Your agent handles cloning,
+local configuration, agent identities, mail setup and verification.
+**No project repository is included or cloned by default.** One or two
+projects are enough; add more later.
 
-## Quick start
+### Ask your agent to clone and set up IAC
 
-```sh
-git clone https://github.com/Ramesh-Giri/IAC-protocol my-org && cd my-org
-# drop your project folders in, beside agentmail/
-claude
-```
+Give your existing coding agent this prompt:
 
-Then type this as your **first prompt**:
+> Clone and set up IAC from https://github.com/Ramesh-Giri/IAC-protocol.
+> Read its README and follow agentmail/SETUP_PROMPT.md. Ask me where to put
+> the workspace and what to name it before cloning. Then ask which project
+> repository URLs I want to set up and whether I am joining an existing team.
+> Clone only the projects I select and handle the setup and checks for me.
 
-> **Read `agentmail/SETUP_PROMPT.md` and follow it to build my agent network
-> over this folder. Run `agentmail/bin/agentmail-scan --all` first and show me
-> what you found before you create anything.**
+The agent asks for a parent directory and workspace name, then clones into
+that exact destination. `team-workspace`, `my-hub`, and `my-projects` are
+only examples, not mandatory names. It must not choose one silently.
 
-That is the whole setup. The scan is read-only; from there Claude proposes a
-roster from *your* folders, asks you the handful of things it cannot know
-(site name, model tier per repo, whether children run unattended), then
-creates the seats, writes the roster and identity files, proves the mail path
-end to end, builds the dashboard, and prints the commands to launch each
-agent.
+### Already cloned IAC yourself?
 
-Prefer to see it first? `agentmail/bin/agentmail-scan --all` writes nothing and
-tells you what a network over this folder would look like.
+Keep the directory name you chose. Open your coding agent there and say:
+
+> Set up IAC in this folder. Read agentmail/SETUP_PROMPT.md, ask me for the
+> project URLs I want, and handle the setup. Keep this workspace name.
+
+You may clone projects manually before setup, or give their URLs to the
+agent and let it clone them. Existing folders are inspected and reused
+with your agreement—not overwritten, moved or recloned automatically.
+
+### What the agent does next
+
+1. **Confirms your workspace.** Preserves a manual clone's name; asks for
+   name/location before an agent-managed clone. Never overwrites a destination.
+2. **Asks what you want locally.** Collects only your selected project URLs
+   or existing local paths. It does not clone every project in a team roster.
+3. **Asks whether you are joining a team.** For a team, requests the private
+   mail-repository URL and your identity/site; otherwise sets up local mail.
+   Missing access is reported, never bypassed.
+4. **Clones and inspects the selected projects.** Maps them to the team's
+   project IDs, follows their development instructions, and requests only
+   missing credentials or choices. Does not deploy, push or implement features.
+5. **Configures your seats and mail.** Preserves the shared roster, writes
+   machine-local paths to ignored `local.json`, and adapts agent instructions
+   without publishing your local identity into project code.
+6. **Verifies and starts what you authorize.** Tests mail locally, starts
+   selected sessions and sync when permitted, and proves a cross-site reply
+   for a team join. It reports any missing registration, login or remote reply.
+
+A clone does not execute setup by itself. These are instructions for the
+agent handling your **setup request**, not a Git hook or background installer.
+
+### For agents reading this README
+
+When the user requests IAC onboarding, follow
+[agentmail/SETUP_PROMPT.md](agentmail/SETUP_PROMPT.md) end to end. Before an
+agent-managed clone, ask for workspace name/location if not supplied.
+After a manual clone, keep its existing name. Ask for selected project URLs
+and join-versus-create intent; then perform the authorized work rather than
+returning a checklist of commands for the human to run.
+
+Do not trigger onboarding during a code review, toolkit upgrade or clone-only
+request. Do not launch agents when prohibited. Missing credentials, remote
+seat approval or a remote reply are real dependencies—not permission to
+invent configuration or claim completion.
+
+### Joining your existing team: Sam's example
+
+Sam can give his agent the first prompt above and say, "I'm joining an existing
+team." The agent asks for the private mail-repository URL and which project
+URLs Sam wants. If he selects only the API project, it clones only that project and
+configures his main seat plus his API seat. Web, tooling and other team projects
+may remain visible in the roster without being cloned or launched locally.
+
+The team provides access and either pre-registers Sam's site/seats or arranges
+roster-owner approval. Sam's agent handles the local work; it does not grant
+itself team membership or change product/technical decision ownership.
+
+There are three separate repositories:
+
+| Repository | What cloning it provides |
+| --- | --- |
+| Public IAC toolkit | Tools, templates and this setup procedure |
+| Private team mail | Shared roster and correspondence; no project source by default |
+| Each selected project | That project's source, history and development instructions |
+
+The public IAC clone deliberately contains **neither project repositories
+nor private team mail**. Mail sync does not clone projects or push their code.
+Everyone with access to a shared mail repository can read its correspondence.
+Never put credentials in it.
 
 ### Already working inside a project?
 
-You don't have to start from a clean folder. If you're in the middle of a repo
-— say `~/work/project-a` — and you want this, hand the repo to the agent already
-running there:
+Tell the agent that project's path. It can configure an external local home
+without moving it. If you want to move or link an existing project into a
+workspace, `agentmail-adopt` can show a dry-run plan; relocation requires your
+explicit agreement. It is not a prerequisite for URL-based onboarding.
 
-> I want to set up the IAC network from `https://github.com/Ramesh-Giri/IAC-protocol`.
-> I'm currently inside the `project-a` project. Run `agentmail-adopt` first, show
-> me the plan, and once I agree, move this project into an org root and follow
-> `agentmail/SETUP_PROMPT.md`.
+If you rename a configured workspace later, update your ignored
+`local.json.homes` and local instruction paths, then restart affected
+sessions/watchers. Do not replace another developer's paths in the shared
+roster or move an active project without checking its working state.
 
-`agentmail-adopt` is **dry run by default** — it prints a plan and changes
-nothing until `--apply`:
-
-```sh
-agentmail/bin/agentmail-adopt          # what would happen
-agentmail/bin/agentmail-adopt --apply  # do it
-```
-
-**The second project joins the first one's org root.** Run the same thing from
-inside `~/work/project-b` later and it finds the `iac-org` that already exists and
-moves `project-b` in beside `project-a` — it does not create a rival network. It
-searches ancestors and two levels sideways, and always prints where it looked.
-
-```
-before                          after
-~/work/project-a                ~/work/iac-org/agentmail/
-~/work/project-b                ~/work/iac-org/project-a/
-                                ~/work/iac-org/project-b/
-```
-
-**Name it whatever you like.** `--name my-hub`, or just clone into any
-folder name — nothing keys off it. The tools find their own root by walking up
-until they see `agentmail/bin/`, so `iac-org`, `my-org` and
-`totally-different-name` all work identically.
-
-Renaming it **after** setup is a different matter, because the roster stores
-absolute paths on purpose (a relative one silently produces a seat that never
-matches its own process). Rename the folder and the dashboard immediately shows
-every seat as `UNREACHABLE` — loudly wrong rather than quietly broken. Three
-places to update, then restart the watchers:
-
-```sh
-# 1. every home in the roster
-sed -i '' 's|/old/path/org|/new/path/org|g' .agent-mail/roster.json
-# 2. the overseer's identity file, and 3. each project's CLAUDE.md
-sed -i '' 's|/old/path/org|/new/path/org|g' CLAUDE.md */CLAUDE.md
-agentmail/bin/network-dashboard        # every seat should be back
-```
-
-Three things `agentmail-adopt` will not do quietly: it refuses to move a project with
-uncommitted work (commit, stash, or `--force`); it offers `--link` to symlink
-instead of moving when a path can't change; and it tells you, every time, that
-**any shell or agent session inside a moved project now has a stale working
-directory** and must be restarted at the new path.
-
-### Working with other people
-
-Tell it who else is in your repos, in the same first message. It already knows
-their git names from the scan — you are confirming, not typing a database:
-
-> Read `agentmail/SETUP_PROMPT.md` and build my agent network over this folder.
-> Run the scan first and show me what you found.
-> Collaborators: **api** is shared with **Bob Iyer** (bob@example.com) who will
-> run his own network; **web** is shared with **Carol Fenn**
-> (carol@example.com) who just commits and runs no agents. Set up the roster so
-> my agents can reach Bob's, and so Carol stays visible as someone we are blind
-> to.
-
-That records both people in the roster's `projects` block. Bob gets a site and
-seats his agents can be mailed at; Carol is recorded with `"site": null`, so
-the dashboard keeps naming her as a human in your repos with no seat — which is
-the honest state, not an oversight.
-
-### When your collaborator clones it later
-
-Send them two things: the toolkit repo, and the **private** URL of your mail
-spool (`.agent-mail` pushed as its own repo — step 7A of the setup prompt does
-this). Then their first message is:
-
-> Read `agentmail/SETUP_PROMPT.md` and follow step 7B — I am joining an
-> existing network. Clone the spool from `<private spool URL>` into
-> `.agent-mail`, read the roster, tell me whose network this is and which
-> projects are shared, then set up only my seats.
-
-Their Claude reads the roster you already wrote — site handles, seat names,
-which projects are shared, who the collaborators are — and configures their
-side to match instead of inventing a parallel network. Nobody re-types the
-agreement, because the roster **is** the agreement.
-
-**The spool repo must be private.** It carries the full text of every message
-your agents exchange.
-
-**Requirements:** Python 3.9+ and git. macOS or Linux. Claude Code (or any
-agent runtime that can run a shell command and watch a file).
+**Requirements:** Python 3.9+, Git, macOS or Linux, and an installed,
+authenticated coding-agent CLI. The setup agent checks prerequisites and
+helps with missing ones under your machine's permission rules. A human must
+complete account sign-in or grant missing repository access.
 
 ---
 
@@ -171,7 +151,7 @@ from self-approving.
 **A dashboard that refuses to reassure you.** It reports what the filesystem
 can prove and prints a labelled hole everywhere else. It will tell you which
 seat has gone deaf, whose queue is growing faster than it drains, who owes
-whom a reply, whether two agents are deadlocked waiting on each other, and
+whom a reply, whether outstanding replies form a possible wait cycle, and
 which humans are committing to your repos with no seat in the network at all.
 Values decay as you watch: a page left open overnight shows hollow glyphs by
 morning, not last night's confident lamps. See
@@ -183,9 +163,11 @@ morning, not last night's confident lamps. See
 
 | File | What it covers |
 |---|---|
-| [`agentmail/SETUP_PROMPT.md`](agentmail/SETUP_PROMPT.md) | **paste this into Claude Code** — the whole build, start to finish |
+| [`agentmail/SETUP_PROMPT.md`](agentmail/SETUP_PROMPT.md) | agent-led onboarding: chosen name, selected project URLs, team join and verification |
 | [`agentmail/README.md`](agentmail/README.md) | the mental model: actors, supervision, why files |
 | [`agentmail/SPEC.md`](agentmail/SPEC.md) | the wire protocol — maildir layout, headers, delivery rules |
+| [`agentmail/HANDOFFS.md`](agentmail/HANDOFFS.md) | research/Markdown handoffs and product versus technical authority |
+| [`agentmail/UPGRADE.md`](agentmail/UPGRADE.md) | 1.1 rollout, compatibility and recovery |
 | [`agentmail/ORCHESTRATION.md`](agentmail/ORCHESTRATION.md) | roles, escalation ladder, model tiers |
 | [`agentmail/COUNCIL.md`](agentmail/COUNCIL.md) | advisory seats from other model families |
 | [`agentmail/FEDERATION.md`](agentmail/FEDERATION.md) | more than one machine |
@@ -202,6 +184,7 @@ Python 3.9 and 3.12 — see [`.github/workflows/tests.yml`](.github/workflows/te
 | `agentmail/bin/agentmail-adopt` | move a project you're inside into an org root — dry run by default |
 | `agentmail/bin/agentmail-scan` | find projects here and propose a roster — read-only |
 | `agentmail/bin/agentmail-launch` | start every seat in a named terminal with its assigned model — dry run by default |
+| `agentmail/bin/agentmail-run` | bind one interactive CLI to a seat and hold its local session lock |
 | `agentmail/bin/agentmail-init` | create a seat's maildir |
 | `agentmail/bin/mail-send` | send a message |
 | `agentmail/bin/mail-read` | read a seat's mail and mark it acknowledged |

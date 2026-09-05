@@ -1,0 +1,55 @@
+#!/usr/bin/env python3
+"""Hold a local seat lease for one interactive CLI. Used by agentmail-launch."""
+import os
+from pathlib import Path
+import subprocess
+import signal
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+from iac import inbox, lock, parser, require_home_site
+
+
+def main():
+    p = parser("agentmail-run")
+    p.add_argument("--seat", required=True)
+    argv = sys.argv[1:]
+    if "--" not in argv:
+        if "--help" in argv or "-h" in argv:
+            p.print_help()
+            return 0
+        p.error("use -- before the CLI command")
+    split = argv.index("--")
+    args = p.parse_args(argv[:split])
+    command = argv[split + 1:]
+    if not command:
+        p.error("command required")
+    inbox(args.mail_root, args.seat)
+    require_home_site(args.mail_root, args.seat, args.site)
+    with lock(args.mail_root, "session-" + args.seat) as lease_fd:
+        env = dict(os.environ, AGENTMAIL_DIR=str(Path(args.mail_root).resolve()), AGENTMAIL_SEAT=args.seat)
+        if args.site:
+            env["AGENTMAIL_SITE"] = args.site
+        # Same terminal process group preserves normal interactive CLI behavior.
+        proc = subprocess.Popen(command, env=env, pass_fds=(lease_fd,))
+        try:
+            return proc.wait()
+        finally:
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+
+
+if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+    try:
+        sys.exit(main())
+    except (OSError, ValueError, RuntimeError) as exc:
+        print(f"agentmail-run: {exc}", file=sys.stderr)
+        sys.exit(1)
+    except KeyboardInterrupt:
+        sys.exit(130)

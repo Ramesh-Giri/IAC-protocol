@@ -1,61 +1,6 @@
-#!/usr/bin/env bash
-# mail-send — compose in recipient's tmp/, atomically deliver into new/.
-# Body from stdin or -m. Never writes into new/ directly (SPEC §3.1).
-#
-# Usage: mail-send --from api --to web --subject "..." \
-#          [--type info] [--thread slug] [--ack] [-m "body"] [-d MAIL_DIR]
-set -euo pipefail
-
-MAIL_DIR="${AGENTMAIL_DIR:-.agent-mail}"
-FROM="" TO="" SUBJECT="" TYPE="info" THREAD="" ACK="none" BODY=""
-
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --from) FROM="$2"; shift 2;;
-    --to) TO="$2"; shift 2;;
-    --subject) SUBJECT="$2"; shift 2;;
-    --type) TYPE="$2"; shift 2;;
-    --thread) THREAD="$2"; shift 2;;
-    --ack) ACK="requested"; shift;;
-    -m) BODY="$2"; shift 2;;
-    -d) MAIL_DIR="$2"; shift 2;;
-    *) echo "unknown arg: $1" >&2; exit 2;;
-  esac
-done
-
-[ -n "$FROM" ] && [ -n "$TO" ] && [ -n "$SUBJECT" ] || {
-  echo "usage: mail-send --from A --to B --subject S [--type T] [--thread X] [--ack] [-m body]" >&2
-  exit 2
-}
-[ -d "$MAIL_DIR/$TO/new" ] || { echo "no such inbox: $MAIL_DIR/$TO (run agentmail-init)" >&2; exit 1; }
-mkdir -p "$MAIL_DIR/$TO/tmp"   # tmp/ is machine-local (untracked in federation)
-[ -n "$BODY" ] || BODY="$(cat)"
-
-SENT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-STAMP="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
-SLUG="$(printf '%s' "$SUBJECT" | tr '[:upper:]' '[:lower:]' | tr -cs 'a-z0-9' '-' \
-        | sed 's/^-//; s/-$//' | cut -c1-40)"
-NAME="$STAMP-$FROM-$SLUG.md"
-# Collision suffix (same sender, same second, same slug)
-n=2
-while [ -e "$MAIL_DIR/$TO/new/$NAME" ] || [ -e "$MAIL_DIR/$TO/tmp/$NAME" ]; do
-  NAME="$STAMP-$FROM-$SLUG-$n.md"; n=$((n + 1))
-done
-
-TMP="$MAIL_DIR/$TO/tmp/$NAME"
-{
-  echo "---"
-  echo "from: $FROM"
-  echo "to: $TO"
-  echo "subject: $SUBJECT"
-  echo "type: $TYPE"
-  [ -n "$THREAD" ] && echo "thread: $THREAD"
-  echo "ack: $ACK"
-  echo "sent: $SENT"
-  echo "---"
-  echo ""
-  printf '%s\n' "$BODY"
-} > "$TMP"
-
-mv "$TMP" "$MAIL_DIR/$TO/new/$NAME"   # atomic on one filesystem
-echo "delivered: $TO/new/$NAME"
+#!/usr/bin/env python3
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+from iac import main
+sys.exit(main(Path(__file__).name))

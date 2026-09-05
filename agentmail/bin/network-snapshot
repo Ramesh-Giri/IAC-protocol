@@ -203,8 +203,12 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
-TOOL_VERSION = "1.0.0"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
+from iac import headers as parse_mail_headers, local_site as resolve_site, local_config, expects_reply
+
+TOOL_VERSION = "1.1.0"
 
 # ---- tunables (documented in meta.activity_rules) --------------------------
 BUSY_WINDOW_SECONDS = 600          # "recent" commit / mail / bridge activity
@@ -212,7 +216,7 @@ DEFAULT_MAIL_WINDOW_HOURS = 48
 DEFAULT_MAIL_CAP = 300
 CONTRIBUTOR_WINDOW_DAYS = 30
 SUBPROCESS_TIMEOUT = 8             # seconds, per external command
-HEADER_READ_BYTES = 4096           # frontmatter is tiny; never read whole bodies
+HEADER_READ_BYTES = 65536          # bounded frontmatter, including pinned artifact lists
 
 WARNINGS: list[str] = []
 
@@ -540,6 +544,10 @@ def read_headers(path: str) -> dict[str, str]:
     except OSError as exc:
         warn(f"unreadable message {os.path.basename(path)}: {exc}")
         return {}
+    try:
+        return parse_mail_headers(head)
+    except ValueError:
+        warn(f"malformed frontmatter in {os.path.basename(path)}; displaying best-effort legacy headers")
     lines = head.splitlines()
     if lines and lines[0].strip() == "---":
         lines = lines[1:]
@@ -568,7 +576,7 @@ def scan_mail(mail_root: str, seat_ids: list[str]) -> list[dict]:
         return messages
     owners = [d for d in dir_entries
               if os.path.isdir(os.path.join(mail_root, d))
-              and d not in ("archive", "bin", ".git")]
+              and not d.startswith(".") and d not in ("archive", "bin")]
     for owner in owners:
         if owner not in seat_ids:
             warn(f"maildir '{owner}' exists but is not in roster.json — "
@@ -613,6 +621,11 @@ def scan_mail(mail_root: str, seat_ids: list[str]) -> list[dict]:
                     "type": fields.get("type") or "info",   # SPEC §6: default
                     "thread": fields.get("thread") or None,
                     "ack": fields.get("ack"),
+                    "id": fields.get("id"),
+                    "in_reply_to": fields.get("in_reply_to") or fields.get("in-reply-to"),
+                    "expects_reply": fields.get("expects_reply"),
+                    "intent": fields.get("intent"),
+                    "project": fields.get("project"),
                     "size_bytes": size,
                 })
     # deterministic order: broadcasts fan out with identical `sent:` seconds,
@@ -825,6 +838,8 @@ def build(args) -> dict:
     except (OSError, ValueError) as exc:
         warn(f"roster.json unusable ({exc}) — seat list will be empty")
     agents: dict = roster.get("agents", {}) if isinstance(roster, dict) else {}
+    homes = local_config(mail_root).get("homes", {})
+    agents = {sid: dict(cfg, home=homes.get(sid, cfg.get("home"))) for sid, cfg in agents.items()}
     sites: dict = roster.get("sites", {}) if isinstance(roster, dict) else {}
     seat_ids = list(agents.keys())
     seat_id_set = set(seat_ids)
@@ -857,7 +872,7 @@ def build(args) -> dict:
     for seat, (pid, hkind) in helper_owner.items():
         if seat not in seat_id_set:
             continue
-        if not agents.get(seat, {}).get("runtime", "").startswith("claude"):
+        if not agents.get(seat, {}).get("runtime", "").startswith(("claude", "codex")):
             continue
         home_real = realpath(agents[seat].get("home"))
         owner_cwd = candidates[pid].get("cwd_real")
@@ -950,9 +965,10 @@ def build(args) -> dict:
             detection = f"watcher-ancestry({seat_session[sid]['via']})"
 
         cwd_matches = []
-        if runtime.startswith("claude") and home_real:
+        family = "claude" if runtime.startswith("claude") else "codex" if runtime.startswith("codex") else None
+        if family and home_real:
             for pid, proc in candidates.items():
-                if proc.get("cwd_real") == home_real and proc.get("family") == "claude":
+                if proc.get("cwd_real") == home_real and proc.get("family") == family:
                     cwd_matches.append(pid)
             cwd_matches.sort(key=lambda p: (
                 candidates[p]["kind"] != "interactive",
@@ -971,7 +987,7 @@ def build(args) -> dict:
             (h for h in helpers
              if h["target"] == sid and h["kind"] == "mail-bridge"),
             key=lambda h: (h["wrapper"], -(h["proc"]["elapsed_seconds"] or 0)))
-        if chosen_pid is None and bridge_helpers and not runtime.startswith("claude"):
+        if chosen_pid is None and bridge_helpers:
             proc = bridge_helpers[0]["proc"]
             session.update({
                 "live": True, "detection": "bridge", "pid": proc["pid"],
@@ -1154,6 +1170,11 @@ def build(args) -> dict:
         "thread": m["thread"],
         "unread": m["unread"],
         "ack": m["ack"],
+        "id": m["id"],
+        "in_reply_to": m["in_reply_to"],
+        "expects_reply": m["expects_reply"],
+        "intent": m["intent"],
+        "project": m["project"],
         "file": m["file"],
         "timestamp_source": m["timestamp_source"],
     } for m in flow_all]
@@ -1172,7 +1193,7 @@ def build(args) -> dict:
         # the newest timestamp as "the last message" for reply-owed purposes
         last_ts = last["timestamp_epoch"]
         tied = [m for m in ordered if m["timestamp_epoch"] == last_ts]
-        owed = sorted({m["mailbox_owner"] for m in tied if m["unread"]})
+        owed = sorted({m["mailbox_owner"] for m in tied if m["unread"] and expects_reply(m)})
         participants = sorted({m["mailbox_owner"] for m in ordered}
                               | {m["from"] for m in ordered if m["from"]})
         threads_out.append({
@@ -1188,6 +1209,9 @@ def build(args) -> dict:
             "last_message_from": last["from"],
             "last_message_to": last["mailbox_owner"],
             "last_message_type": last["type"],
+            "last_message_expects_reply": str(expects_reply(last)).lower(),
+            "last_message_id": last["id"],
+            "last_message_file": last["file"],
             "last_message_copies": len(tied),
             "last_message_unread": bool(owed),
             "reply_owed_by": owed,
@@ -1253,11 +1277,9 @@ def build(args) -> dict:
                         seat_id_set)
 
     # -- federation ---------------------------------------------------------
-    local_site = None
-    for cfg in agents.values():
-        if cfg.get("role") == "parent" and cfg.get("site"):
-            local_site = cfg["site"]
-            break
+    local_site = resolve_site(mail_root, roster, getattr(args, "site", None))
+    if sites and not local_site:
+        warn("local site unknown; set AGENTMAIL_SITE or local.json.site")
     sites_out = []
     for name, cfg in (sites or {}).items():
         seats_here = [sid for sid, a in agents.items() if a.get("site") == name]
@@ -1439,6 +1461,7 @@ def main(argv: list[str] | None = None) -> int:
         prog="network-snapshot",
         description="Emit one JSON document describing live AgentMail network state.")
     ap.add_argument("--pretty", action="store_true", help="indent the JSON output")
+    ap.add_argument("--site", help="local site override (or AGENTMAIL_SITE/local.json)")
     ap.add_argument("--mail-root", default=default_root,
                     help=f"path to .agent-mail (default: {default_root})")
     ap.add_argument("--hours", type=float, default=DEFAULT_MAIL_WINDOW_HOURS,
