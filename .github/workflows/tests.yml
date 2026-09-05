@@ -24,6 +24,15 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: interactive diagram switch and static build (offline)
+        run: |
+          node agentmail/diagram/test-switch.cjs
+          python3 agentmail/diagram/build.py
+
       - name: transport and orchestration regression tests (offline)
         run: python3 -m unittest discover -s agentmail/tests -v
 

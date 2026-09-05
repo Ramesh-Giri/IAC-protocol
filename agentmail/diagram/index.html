@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="See how IAC connects your coding agents. Switch between a simple overview and the detailed local and team-mail workflow.">
+  <title>IAC — How your agents connect</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="styles.css">
+  <script src="switch.js" defer></script>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <a class="brand" href="https://github.com/Ramesh-Giri/IAC-protocol">IAC <span>↗</span></a>
+        <h1>How your agents connect</h1>
+      </div>
+      <div class="tabs" role="tablist" aria-label="Diagram detail" hidden>
+        <button id="simple-tab" type="button" role="tab" aria-selected="true" aria-controls="simple-panel" tabindex="0">✨ Simple</button>
+        <button id="complex-tab" type="button" role="tab" aria-selected="false" aria-controls="complex-panel" tabindex="-1">🔍 Complex</button>
+      </div>
+    </header>
+
+    <section id="simple-panel" role="tabpanel" aria-labelledby="simple-tab" tabindex="0">
+      <h2 class="view-heading">Simple overview</h2>
+      <div class="canvas" role="region" aria-label="Simple diagram; scroll horizontally on small screens" tabindex="0">
+        <img src="simple.svg" width="1120" height="840" alt="You direct your IAC hub, which connects your frontend and backend agents. An optional private team-mail repository connects your hub to a teammate's hub.">
+      </div>
+      <p class="caption"><strong>You steer. Context guides. Agents talk through IAC.</strong> Solid lines stay local; dotted lines connect teammates.</p>
+    </section>
+
+    <section id="complex-panel" role="tabpanel" aria-labelledby="complex-tab" tabindex="0">
+      <h2 class="view-heading">Detailed workflow</h2>
+      <div class="canvas" role="region" aria-label="Complex diagram; scroll horizontally on small screens" tabindex="0">
+        <img src="complex.svg" width="1280" height="880" alt="Each developer has one main agent checking two inboxes. Local agent-mail coordinates their project agents and context. Separate team-mail clones synchronize through a private Git repository. Main agents review and relay handoffs; local mail and project code are not automatically shared.">
+      </div>
+      <p class="caption"><strong>One main agent, two mail channels.</strong> Only the private team channel syncs. Your fork's iac-team.json carries its address, not the conversations.</p>
+    </section>
+    <noscript><p>JavaScript is off, so both diagrams are shown above.</p></noscript>
+    <footer>Project context stays with its code. Sharing team mail does not upload local conversations. <a href="https://github.com/Ramesh-Giri/IAC-protocol/blob/main/agentmail/TEAM_SETUP.md">Team setup ↗</a></footer>
+  </main>
+</body>
+</html>
