@@ -57,5 +57,6 @@
 # ── inside the toolkit, a few things are still generated ────────────────────
 agentmail/**/__pycache__/
 agentmail/**/*.pyc
+agentmail/diagram/dist/
 agentmail/**/.DS_Store
 .DS_Store

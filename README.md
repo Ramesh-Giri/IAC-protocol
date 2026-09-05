@@ -17,8 +17,13 @@ framework or a replacement for your coding agent, Git, tests or judgment.
 Your main agent coordinates the work; each project agent works from that
 project's own context and instructions.
 
-**Choose your view:** a quick overview or a look under the hood. Click either
-heading to expand or collapse it; Simple starts open.
+**Want a real Simple / Complex switch?** The
+[standalone diagram page](agentmail/diagram/README.md) swaps the two views in
+place. Its source is included in this repo and works locally without installing
+anything. A GitHub source-file link does not run the page.
+
+**README fallback:** click either heading below to expand or collapse its
+diagram; Simple starts open. These sections are not the interactive switch.
 
 <details open>
 <summary>✨ Simple — IAC at a glance</summary>
@@ -428,6 +433,7 @@ morning, not last night's confident lamps. See
 |---|---|
 | [`agentmail/SETUP_PROMPT.md`](agentmail/SETUP_PROMPT.md) | agent-led onboarding: chosen name, selected project URLs, team join and verification |
 | [`agentmail/TEAM_SETUP.md`](agentmail/TEAM_SETUP.md) | start solo, create private team mail, share its connection in a fork, onboard teammates |
+| [`agentmail/diagram/README.md`](agentmail/diagram/README.md) | standalone Simple / Complex diagram switch, local use and static hosting |
 | [`agentmail/PROJECT_CONTEXT.md`](agentmail/PROJECT_CONTEXT.md) | optional project interview and six tailored context files |
 | [`agentmail/examples/web/README.md`](agentmail/examples/web/README.md) | filled-in six-file web example; illustrative choices, no application code |
 | [`agentmail/README.md`](agentmail/README.md) | the mental model: actors, supervision, why files |

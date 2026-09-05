@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 840" role="img" aria-labelledby="title desc">
+  <title id="title">IAC at a glance</title>
+  <desc id="desc">You direct an IAC hub connecting frontend and backend agents. Optional team mail connects another developer's hub.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10Z" fill="#c9d1d9"/></marker>
+  </defs>
+  <style>
+    text { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; text-anchor: middle; font-size: 22px; }
+    .title { font-weight: 600; }
+    .edge { fill: none; stroke: #c9d1d9; stroke-width: 2; marker-start: url(#arrow); marker-end: url(#arrow); }
+    .shared { stroke-dasharray: 5 6; }
+    .label { fill: #c9d1d9; font-size: 18px; }
+  </style>
+  <g class="edge">
+    <path d="M560 140V235"/>
+    <path d="M355 350C220 380 210 445 210 510"/>
+    <path d="M560 375V510"/>
+    <path class="shared" d="M765 350C925 380 930 440 930 510"/>
+    <path class="shared" d="M930 625V710"/>
+  </g>
+  <rect x="434" y="177" width="252" height="30" fill="#0d1117"/>
+  <text class="label" x="560" y="198">Goals ↓ · Updates ↑</text>
+  <rect x="798" y="428" width="294" height="30" fill="#0d1117"/>
+  <text class="label" x="945" y="449">When you add a teammate</text>
+  <g fill="#451a03">
+    <rect x="370" y="30" width="380" height="110" rx="10" fill="#fef3c7" stroke="#b45309" stroke-width="3"/>
+    <text class="title" x="560" y="74">🧑‍💻 You</text>
+    <text x="560" y="112">The ideas. The final say.</text>
+  </g>
+  <g fill="#2e1065">
+    <rect x="355" y="235" width="410" height="140" rx="10" fill="#ede9fe" stroke="#7c3aed" stroke-width="4"/>
+    <text class="title" x="560" y="283">📬 IAC · your coordination</text>
+    <text class="title" x="560" y="313">hub</text>
+    <text x="560" y="351">Main agent + AgentMail</text>
+  </g>
+  <g fill="#0c4a6e">
+    <rect x="60" y="510" width="300" height="115" rx="10" fill="#e0f2fe" stroke="#0284c7" stroke-width="3"/>
+    <text class="title" x="210" y="555">🎨 Frontend agent</text>
+    <text x="210" y="593">Its code + its context</text>
+    <rect x="410" y="510" width="300" height="115" rx="10" fill="#e0f2fe" stroke="#0284c7" stroke-width="3"/>
+    <text class="title" x="560" y="555">⚙️ Backend agent</text>
+    <text x="560" y="593">Its code + its context</text>
+  </g>
+  <g fill="#14532d">
+    <rect x="775" y="510" width="310" height="115" rx="10" fill="#dcfce7" stroke="#15803d" stroke-width="3"/>
+    <text class="title" x="930" y="555">🔒 Team mail</text>
+    <text x="930" y="593">Private shared Git repo</text>
+    <rect x="755" y="710" width="350" height="110" rx="10" fill="#dcfce7" stroke="#15803d" stroke-width="3"/>
+    <text class="title" x="930" y="754">👋 Teammate's IAC hub</text>
+    <text x="930" y="793">Their main agent + projects</text>
+  </g>
+</svg>

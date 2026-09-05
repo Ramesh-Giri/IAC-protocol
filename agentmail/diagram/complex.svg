@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 880" role="img" aria-labelledby="title desc">
+  <title id="title">IAC: one main agent, two mail channels</title>
+  <desc id="desc">Each main agent coordinates local project agents through agent-mail and reviews team handoffs through a separate team-mail clone. Only team-mail synchronizes through the private remote.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 10 5 0 10Z" fill="#c9d1d9"/></marker>
+  </defs>
+  <style>
+    text { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; text-anchor: middle; font-size: 19px; }
+    .title { font-weight: 650; }
+    .label { fill: #c9d1d9; font-size: 16px; }
+    .group { fill: #aeb9c7; font-size: 18px; text-anchor: start; }
+    .edge { fill: none; stroke: #c9d1d9; stroke-width: 2; marker-start: url(#arrow); marker-end: url(#arrow); }
+    .shared { stroke-dasharray: 5 6; }
+  </style>
+  <rect x="25" y="190" width="595" height="615" rx="16" fill="#11171f" stroke="#39414d"/>
+  <rect x="695" y="190" width="560" height="615" rx="16" fill="#11171f" stroke="#39414d"/>
+  <text class="group" x="48" y="224">YOUR WORKSPACE</text>
+  <text class="group" x="718" y="224">TEAMMATE'S WORKSPACE</text>
+  <g class="edge">
+    <path d="M190 135V265"/>
+    <path d="M310 315H395"/>
+    <path d="M190 370V465"/>
+    <path d="M170 565V655"/>
+    <path d="M215 565C215 610 445 610 445 655"/>
+    <path class="shared" d="M495 265C495 185 595 205 595 140"/>
+    <path class="shared" d="M690 140C690 205 820 185 820 265"/>
+    <path d="M920 315H985"/>
+    <path d="M1100 370V465"/>
+    <path d="M1100 565V655"/>
+  </g>
+  <g class="label">
+    <text x="190" y="174">Goals ↓ · Updates ↑</text>
+    <text x="348" y="398">Reviewed handoffs</text>
+    <text x="190" y="423">Tasks ↓ · Evidence ↑</text>
+    <text x="530" y="181">Git sync</text>
+    <text x="757" y="181">Git sync</text>
+    <text x="960" y="398">Reviewed handoffs</text>
+    <text x="1100" y="423">Tasks ↓ · Evidence ↑</text>
+  </g>
+  <g fill="#451a03">
+    <rect x="60" y="35" width="260" height="100" rx="10" fill="#fef3c7" stroke="#b45309" stroke-width="3"/>
+    <text class="title" x="190" y="76">🧑‍💻 You</text>
+    <text x="190" y="109">Goals, scope + approvals</text>
+  </g>
+  <g fill="#14532d">
+    <rect x="515" y="30" width="270" height="110" rx="10" fill="#dcfce7" stroke="#15803d" stroke-width="3"/>
+    <text class="title" x="650" y="68">☁️ Private mail repo</text>
+    <text x="650" y="99">Roster + approved</text>
+    <text x="650" y="124">correspondence</text>
+    <rect x="395" y="265" width="200" height="105" rx="10" fill="#dcfce7" stroke="#15803d" stroke-width="3"/>
+    <text class="title" x="495" y="308">🔒 .team-mail/</text>
+    <text x="495" y="344">Your private clone</text>
+    <rect x="720" y="265" width="200" height="105" rx="10" fill="#dcfce7" stroke="#15803d" stroke-width="3"/>
+    <text class="title" x="820" y="308">🔒 .team-mail/</text>
+    <text x="820" y="344">Their private clone</text>
+  </g>
+  <g fill="#2e1065">
+    <rect x="70" y="265" width="240" height="105" rx="10" fill="#ede9fe" stroke="#7c3aed" stroke-width="3"/>
+    <text class="title" x="190" y="308">🧠 Your main agent</text>
+    <text x="190" y="344">One session, two inboxes</text>
+    <rect x="985" y="265" width="230" height="105" rx="10" fill="#ede9fe" stroke="#7c3aed" stroke-width="3"/>
+    <text class="title" x="1100" y="308">🧠 Their main agent</text>
+    <text x="1100" y="344">Reviews and coordinates</text>
+  </g>
+  <g fill="#0c4a6e">
+    <rect x="65" y="465" width="250" height="100" rx="10" fill="#e0f2fe" stroke="#0284c7" stroke-width="3"/>
+    <text class="title" x="190" y="505">📬 .agent-mail/</text>
+    <text x="190" y="539">Local project coordination</text>
+    <rect x="50" y="655" width="240" height="105" rx="10" fill="#e0f2fe" stroke="#0284c7" stroke-width="3"/>
+    <text class="title" x="170" y="695">🎨 Frontend agent</text>
+    <text x="170" y="730">Context + code + tests</text>
+    <rect x="325" y="655" width="240" height="105" rx="10" fill="#e0f2fe" stroke="#0284c7" stroke-width="3"/>
+    <text class="title" x="445" y="695">⚙️ Backend agent</text>
+    <text x="445" y="730">Context + code + tests</text>
+    <rect x="975" y="465" width="250" height="100" rx="10" fill="#e0f2fe" stroke="#0284c7" stroke-width="3"/>
+    <text class="title" x="1100" y="505">📬 Their .agent-mail/</text>
+    <text x="1100" y="539">Their local coordination</text>
+    <rect x="960" y="655" width="280" height="105" rx="10" fill="#e0f2fe" stroke="#0284c7" stroke-width="3"/>
+    <text class="title" x="1100" y="695">🛠️ Their project agents</text>
+    <text x="1100" y="730">Context + code + tests</text>
+  </g>
+  <text class="label" x="640" y="850">Local mail is not mirrored. Main agents review what crosses the team boundary.</text>
+</svg>
