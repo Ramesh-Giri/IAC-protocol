@@ -17,6 +17,12 @@ framework or a replacement for your coding agent, Git, tests or judgment.
 Your main agent coordinates the work; each project agent works from that
 project's own context and instructions.
 
+**Choose your view:** a quick overview or a look under the hood. Click either
+heading to expand or collapse it; Simple starts open.
+
+<details open>
+<summary>✨ Simple — IAC at a glance</summary>
+
 ```mermaid
 flowchart TD
     YOU("🧑‍💻 You<br/>The ideas. The final say.")
@@ -50,6 +56,67 @@ back to you. Start with one project, add more when needed—or connect another
 developer's main agent through optional private team-mail sync.
 Solid lines are your local workflow; dotted lines are the optional team
 connection. Local mail stays local—sharing a team channel does not upload it.
+
+</details>
+
+<details>
+<summary>🔍 Complex — agents, context and the two mail channels</summary>
+
+```mermaid
+flowchart TD
+    DEV("🧑‍💻 You<br/>Goals, scope and approvals")
+
+    subgraph YOURS["Your workspace"]
+        MAIN("🧠 Your main agent<br/>One session, two inboxes")
+        LOCAL("📬 .agent-mail/<br/>Local project coordination")
+        FRONT("🎨 Frontend agent<br/>Project context + code + tests")
+        BACK("⚙️ Backend agent<br/>Project context + code + tests")
+        TEAMLOCAL("🔒 .team-mail/<br/>Your private-channel clone")
+        MAIN <-->|"Scoped tasks and evidence"| LOCAL
+        LOCAL <-->|"API questions and feedback"| FRONT
+        LOCAL <-->|"Contracts and results"| BACK
+        MAIN <-->|"Reviewed team handoffs"| TEAMLOCAL
+    end
+
+    DEV <-->|"Decisions and progress"| MAIN
+    REMOTE("☁️ Private mail repository<br/>Shared roster + approved correspondence")
+    TEAMLOCAL <-.->|"Optional Git sync"| REMOTE
+
+    subgraph THEIRS["Teammate's workspace"]
+        TEAMPEER("🔒 .team-mail/<br/>Their private-channel clone")
+        PEER("🧠 Their main agent")
+        PEERLOCAL("📬 Their .agent-mail/<br/>Their local coordination")
+        PROJECTS("🛠️ Their selected project agents<br/>Project context + code + tests")
+        TEAMPEER <-->|"Reviewed team handoffs"| PEER
+        PEER <-->|"Scoped tasks and evidence"| PEERLOCAL
+        PEERLOCAL <--> PROJECTS
+    end
+
+    REMOTE <-.->|"Optional Git sync"| TEAMPEER
+
+    classDef human fill:#fef3c7,stroke:#b45309,color:#451a03,stroke-width:2px
+    classDef main fill:#ede9fe,stroke:#7c3aed,color:#2e1065,stroke-width:2px
+    classDef local fill:#e0f2fe,stroke:#0284c7,color:#0c4a6e,stroke-width:2px
+    classDef shared fill:#dcfce7,stroke:#15803d,color:#14532d,stroke-width:2px
+    class DEV human
+    class MAIN,PEER main
+    class LOCAL,FRONT,BACK,PEERLOCAL,PROJECTS local
+    class TEAMLOCAL,REMOTE,TEAMPEER shared
+```
+
+- **Context stays with the project.** It guides scope, architecture and
+  verification; agents keep it current as the work changes.
+- **Local mail stays local.** Each main agent reads both channels and relays
+  reviewed handoffs. There is no automatic copying between the two spools.
+- **Only the team channel syncs.** Both `.team-mail/` folders are separate
+  clones of the same private repository. They do not synchronize project code.
+- **Your fork carries the address.** Its optional `iac-team.json` lets an
+  authorized setup agent discover the shared channel; it contains no mail.
+
+This shows the new two-channel setup. Existing single-channel installations
+keep their verified configuration; see [team setup](agentmail/TEAM_SETUP.md).
+
+</details>
 
 ### Solo developer: more structured vibe coding
 
