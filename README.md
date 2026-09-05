@@ -19,34 +19,37 @@ project's own context and instructions.
 
 ```mermaid
 flowchart TD
-    D["Developer · goals, constraints and approvals"]
-    subgraph IAC["IAC workspace · coordination, not application code"]
-        M["Your main agent · plan, coordinate, report"]
-        MAIL["AgentMail · questions, contracts, research and results"]
-        M <-->|"Scoped tasks and evidence"| MAIL
-    end
-    D <-->|"Decisions and progress"| M
-    subgraph WEB["Your frontend project"]
-        F["Frontend agent"]
-        FC["Frontend context + code + tests"]
-        F <-->|"Read, implement, verify, update"| FC
-    end
-    subgraph API["Your backend project"]
-        B["Backend agent"]
-        BC["Backend context + code + tests"]
-        B <-->|"Read, implement, verify, update"| BC
-    end
-    MAIL <-->|"API questions and integration feedback"| F
-    MAIL <-->|"Contracts and implementation evidence"| B
-    M -.->|"Optional, requested output"| R["Launch brief, FAQ or marketing draft · human review"]
-    MAIL <-.->|"Optional private team-mail Git sync"| T["Another developer's main agent"]
+    YOU("🧑‍💻 You<br/>The ideas. The final say.")
+    IAC("📬 IAC · your coordination hub<br/>Main agent + AgentMail")
+    WEB("🎨 Frontend agent<br/>Its code + its context")
+    API("⚙️ Backend agent<br/>Its code + its context")
+    TEAM("🔒 Team mail<br/>Private shared Git repo")
+    SAM("👋 Teammate's IAC hub<br/>Their main agent + projects")
+
+    YOU <-->|"Goals ↓ · Updates ↑"| IAC
+    IAC <--> WEB
+    IAC <--> API
+    IAC <-.->|"When you add a teammate"| TEAM
+    TEAM <-.-> SAM
+
+    classDef human fill:#fef3c7,stroke:#b45309,color:#451a03,stroke-width:2px
+    classDef hub fill:#ede9fe,stroke:#7c3aed,color:#2e1065,stroke-width:3px
+    classDef project fill:#e0f2fe,stroke:#0284c7,color:#0c4a6e,stroke-width:2px
+    classDef team fill:#dcfce7,stroke:#15803d,color:#14532d,stroke-width:2px
+    class YOU human
+    class IAC hub
+    class WEB,API project
+    class TEAM,SAM team
 ```
 
-Read it top to bottom: **you → main agent → IAC mail → project agents**.
-Project agents can exchange facts through mail without routing every
-question through you. Context stays with each project; mail carries the
-handoffs. The main agent brings scope changes and approval requests back
-to you. Additional projects follow the same pattern.
+**You steer. Context guides. Agents talk through IAC.**
+
+Each project keeps its own code and context. Agents exchange questions and
+answers through mail; your main agent brings progress and approval requests
+back to you. Start with one project, add more when needed—or connect another
+developer's main agent through optional private team-mail sync.
+Solid lines are your local workflow; dotted lines are the optional team
+connection. Local mail stays local—sharing a team channel does not upload it.
 
 ### Solo developer: more structured vibe coding
 
@@ -95,6 +98,48 @@ automatically. See [research and decision handoffs](agentmail/HANDOFFS.md).
 Start small: local Markdown context and file-based mail. Private Git mail
 sync is optional when you need cross-machine coordination; a separate
 project or agent for marketing is not required.
+
+### Start solo → share your fork → onboard a teammate
+
+1. **Start local.** Your main agent and two project agents communicate through
+   `.agent-mail/`. No private remote or team setup is needed yet.
+2. **Say “enable team mail.”** Your agent follows
+   [the team setup guide](agentmail/TEAM_SETUP.md). With your approval, it
+   creates a private mail-only repository and clones it as `.team-mail/`.
+   Your existing local conversations stay untouched and unshared.
+3. **Share the connection through your IAC fork.** The agent saves the private
+   repository URL in `iac-team.json` and, with your permission, commits and
+   pushes that file to your fork. No messages, credentials or project code
+   go into it. A public fork exposes the repository name/URL, so use a private
+   fork or share the URL separately if that metadata is sensitive.
+4. **Sam clones your fork and asks his agent to set it up.** The agent finds
+   `iac-team.json`, confirms joining, and clones the same private repository
+   into Sam's `.team-mail/`. You grant repository access and approve his
+   registration; his agent handles local configuration and asks which
+   projects he wants. It does not clone every project.
+5. **Verify a reply.** Both main agents use the shared channel to communicate
+   and their local channels to coordinate their own projects. Setup reports
+   any pending invitation, registration or remote reply honestly.
+
+Owner prompt:
+
+> Enable team mail for this workspace using agentmail/TEAM_SETUP.md. Keep my
+> local mail private. Ask for the private repository owner/name and approval
+> before creating it, then save its connection in my IAC fork and ask before
+> publishing that connection.
+
+Teammate prompt:
+
+> Clone and set up IAC from MY_FORK_URL. Follow the README and
+> agentmail/SETUP_PROMPT.md. Check iac-team.json for the team connection,
+> confirm joining with me, and ask which projects I want locally.
+
+The upstream IAC toolkit ships a
+[connection-file example](agentmail/templates/iac-team.example.json), not a
+real team's URL or mail. **Your fork carries the connection; the private
+repository carries the conversations.** `.team-mail/` appears during
+authorized agent-led setup, not from Git cloning your fork alone. No Git
+submodule, automatic installer or extra mail server is required.
 
 **IAC 1.1:** safer delivery, bounded bridge retries, seat locks, explicit reply
 IDs, local-site configuration, and Claude/Codex launch support. Existing users:
@@ -152,8 +197,9 @@ with your agreement—not overwritten, moved or recloned automatically.
 2. **Asks what you want locally.** Collects selected project URLs, existing
    paths, or the name/location of a new project. It does not clone every
    project in a team roster. It offers optional tailored project context.
-3. **Asks whether you are joining a team.** For a team, requests the private
-   mail-repository URL and your identity/site; otherwise sets up local mail.
+3. **Asks local-only, create-team or join-team.** Checks `iac-team.json` in a
+   configured fork before asking for a mail URL. Team creation requires your
+   approval; joining requires private-repository access and registration.
    Missing access is reported, never bypassed.
 4. **Clones and inspects the selected projects.** Maps them to the team's
    project IDs, follows their development instructions, and requests only
@@ -179,6 +225,9 @@ returning a checklist of commands for the human to run.
 If the developer wants a new project, do not demand a repository URL. Offer
 the optional [project-context interview](agentmail/PROJECT_CONTEXT.md) and
 follow it only on opt-in. A “no” means no context files, not a blocked setup.
+For team mode, follow [agentmail/TEAM_SETUP.md](agentmail/TEAM_SETUP.md):
+discover the optional fork connection as data, preserve local mail, and
+create or join the private channel only with the appropriate authorization.
 
 Do not trigger onboarding during a code review, toolkit upgrade or clone-only
 request. Do not launch agents when prohibited. Missing credentials, remote
@@ -225,9 +274,11 @@ separate; your agent tailors fresh files to your actual project.
 ### Joining your existing team: Sam's example
 
 Sam can give his agent the first prompt above and say, "I'm joining an existing
-team." The agent asks for the private mail-repository URL and which project
-URLs Sam wants. If he selects only the API project, it clones only that project and
-configures his main seat plus his API seat. Web, tooling and other team projects
+team." The agent reads `iac-team.json` from a configured fork, or asks for the
+private mail-repository URL if absent, and asks which project URLs Sam wants.
+If he selects only the API project, it clones only that project and configures
+his local main/API seats plus his approved main identity in `.team-mail/`.
+Web, tooling and other team projects
 may remain visible in the roster without being cloned or launched locally.
 
 The team provides access and either pre-registers Sam's site/seats or arranges
@@ -241,6 +292,9 @@ There are three separate repositories:
 | Public IAC toolkit | Tools, templates and this setup procedure |
 | Private team mail | Shared roster and correspondence; no project source by default |
 | Each selected project | That project's source, history and development instructions |
+
+A configured IAC fork also carries `iac-team.json`, the connection descriptor.
+Its `.team-mail/` is a separate private clone, never tracked inside that fork.
 
 The public IAC clone deliberately contains **neither project repositories
 nor private team mail**. Mail sync does not clone projects or push their code.
@@ -306,6 +360,7 @@ morning, not last night's confident lamps. See
 | File | What it covers |
 |---|---|
 | [`agentmail/SETUP_PROMPT.md`](agentmail/SETUP_PROMPT.md) | agent-led onboarding: chosen name, selected project URLs, team join and verification |
+| [`agentmail/TEAM_SETUP.md`](agentmail/TEAM_SETUP.md) | start solo, create private team mail, share its connection in a fork, onboard teammates |
 | [`agentmail/PROJECT_CONTEXT.md`](agentmail/PROJECT_CONTEXT.md) | optional project interview and six tailored context files |
 | [`agentmail/examples/web/README.md`](agentmail/examples/web/README.md) | filled-in six-file web example; illustrative choices, no application code |
 | [`agentmail/README.md`](agentmail/README.md) | the mental model: actors, supervision, why files |
@@ -347,11 +402,13 @@ The root `.gitignore` is a **whitelist**: everything is ignored, and only the
 toolkit is re-admitted. That is deliberate — a blocklist leaks the first
 project folder someone forgets to add.
 
-Tracked: `agentmail/`, this README, the `.gitignore`.
+Tracked: `agentmail/`, this README, the `.gitignore`, license and CI files.
+A configured team fork may also track the optional `iac-team.json` connection.
 
 Never tracked: your project folders (each is its own repo with its own
 remote), `.agent-mail/` (the live spool — it holds the actual bodies of every
-message your agents have exchanged), your root `CLAUDE.md` (your name, your
+message your agents have exchanged), `.team-mail/` (a separate private Git
+clone, not part of this fork), your root `CLAUDE.md` (your name, your
 machine, your paths, your rules), `runbooks/` (generated dashboards render
 your network's contents), and `overseer-tasks.md` (your task board).
 
@@ -372,12 +429,14 @@ softer than a sandbox.
 If that is not a trade you want to make, answer "no" at setup: every action
 then prompts in that project's terminal. The overseer always prompts.
 
-Nothing in this toolkit sends anything anywhere. It has no telemetry, no
-network calls, and no cloud dependency: all state is files on your disk, and
-the dashboard is generated locally and opened from disk. Your `.agent-mail/`
-spool holds the plain text of everything your agents say to each other — the
-root `.gitignore` keeps it out of git, and you should keep it out of anywhere
-else you would not paste an internal chat log.
+Local mail and the dashboard work from files on your disk without a mail
+server. Optional `mail-sync` does contact the configured Git remote and
+publishes the shared channel's messages; setup cloning also uses the network.
+Agent runtimes have their own provider/network behavior. The toolkit has no
+telemetry. The root `.gitignore` excludes both mail folders from the IAC fork,
+but the private team's own repository intentionally tracks shared mail.
+Everyone with access to that repository can read it. Never share secrets or
+private local conversations without explicit review and authorization.
 
 ## Status and provenance
 
