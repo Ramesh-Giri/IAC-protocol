@@ -1,12 +1,100 @@
 # Inter-Agent Communication
 
-**A file-based protocol, supervision model and dashboard for running several
-AI coding agents — one per repository — as one accountable network.**
+**Give your AI coding agents a shared direction—and a way to talk to each
+other. For solo developers and teams working across connected projects.**
 
-IAC also removes the human copy/paste relay between developers' agents:
-share research and Markdown, review it in context, agree on product and
-technical decisions, then hand scoped work to the appropriate project seats.
-Start with [research handoffs](agentmail/HANDOFFS.md).
+Building a frontend and backend with separate agents should not make you
+their full-time messenger. IAC combines optional project-context guidance
+with AgentMail, a file-based inter-agent communication protocol, plus a
+supervision model and dashboard. You set the goals and approve important
+decisions; agents exchange implementation details, questions and evidence
+without you copying prompts between sessions.
+
+## Where IAC fits
+
+IAC is the coordination layer around your projects, not an application
+framework or a replacement for your coding agent, Git, tests or judgment.
+Your main agent coordinates the work; each project agent works from that
+project's own context and instructions.
+
+```mermaid
+flowchart TD
+    D["Developer · goals, constraints and approvals"]
+    subgraph IAC["IAC workspace · coordination, not application code"]
+        M["Your main agent · plan, coordinate, report"]
+        MAIL["AgentMail · questions, contracts, research and results"]
+        M <-->|"Scoped tasks and evidence"| MAIL
+    end
+    D <-->|"Decisions and progress"| M
+    subgraph WEB["Your frontend project"]
+        F["Frontend agent"]
+        FC["Frontend context + code + tests"]
+        F <-->|"Read, implement, verify, update"| FC
+    end
+    subgraph API["Your backend project"]
+        B["Backend agent"]
+        BC["Backend context + code + tests"]
+        B <-->|"Read, implement, verify, update"| BC
+    end
+    MAIL <-->|"API questions and integration feedback"| F
+    MAIL <-->|"Contracts and implementation evidence"| B
+    M -.->|"Optional, requested output"| R["Launch brief, FAQ or marketing draft · human review"]
+    MAIL <-.->|"Optional private team-mail Git sync"| T["Another developer's main agent"]
+```
+
+Read it top to bottom: **you → main agent → IAC mail → project agents**.
+Project agents can exchange facts through mail without routing every
+question through you. Context stays with each project; mail carries the
+handoffs. The main agent brings scope changes and approval requests back
+to you. Additional projects follow the same pattern.
+
+### Solo developer: more structured vibe coding
+
+You do not need a team to benefit. One developer building a web frontend
+and an API can use this workflow:
+
+1. **Agree on what to build.** Optionally ask the setup agent to generate six
+   tailored context files per project: scope, architecture, standards,
+   interactions, working rules and progress. This gives coding agents an
+   explicit development path instead of leaving gaps for them to invent
+   features, dependencies or architectural choices.
+2. **Let the agents coordinate integration.** The frontend agent asks the
+   backend agent for the actual endpoint, payload, authentication and error
+   contract through AgentMail. The backend agent replies with implementation
+   details and evidence; the frontend reports integration gaps in the same
+   thread. You no longer have to relay each prompt and response manually.
+3. **Review small, verified increments.** Agents check their changes, keep
+   project context current and report results or blockers. A proposed API or
+   scope change still needs the appropriate approval; receiving a message
+   does not authorize arbitrary work.
+4. **Reuse the knowledge when needed.** Ask the main agent for a launch brief,
+   product FAQ, landing-page copy or a marketing handoff based on approved
+   product context and verified features. This is an optional agent-authored
+   resource—not a built-in marketing generator or permission to publish.
+   Separate planned features from shipped ones and exclude private details.
+
+Context helps reduce drift; it does not guarantee correct code or force an
+agent to obey. Agents must actually read it, keep it current, and verify
+their work. IAC delivers messages; a running, configured agent must read and
+act on them. You can start with one project and optional context, then add
+mail-connected agents when coordination becomes useful.
+
+### Teams: the same workflow across developers
+
+When another developer joins, their main agent can exchange research,
+Markdown proposals, decisions and project handoffs with yours through a
+separately configured private mail repository. Neither developer needs to
+copy the other agent's response into a prompt. Each person clones only the
+projects they need; mail access does not grant source-repository access.
+
+Product owners retain requirements authority; technical owners retain
+architecture and implementation authority, according to the team's agreed
+roles. Incoming research is input to review, not an instruction to execute
+automatically. See [research and decision handoffs](agentmail/HANDOFFS.md).
+
+Start small: local Markdown context and file-based mail. Private Git mail
+sync is optional when you need cross-machine coordination; a separate
+project or agent for marketing is not required.
 
 **IAC 1.1:** safer delivery, bounded bridge retries, seat locks, explicit reply
 IDs, local-site configuration, and Claude/Codex launch support. Existing users:
@@ -19,15 +107,27 @@ local configuration, agent identities, mail setup and verification.
 **No project repository is included or cloned by default.** One or two
 projects are enough; add more later.
 
+Starting something new? The agent can also prepare a new project folder and
+offer **six personalized context files** before implementation—for web,
+Android, iOS, cross-platform mobile, backend, desktop or other projects.
+Context is optional, not a mandatory framework or an application scaffold.
+
 ### Ask your agent to clone and set up IAC
 
 Give your existing coding agent this prompt:
 
 > Clone and set up IAC from https://github.com/Ramesh-Giri/IAC-protocol.
 > Read its README and follow agentmail/SETUP_PROMPT.md. Ask me where to put
-> the workspace and what to name it before cloning. Then ask which project
-> repository URLs I want to set up and whether I am joining an existing team.
-> Clone only the projects I select and handle the setup and checks for me.
+> the workspace and what to name it before cloning. Then ask whether I'm
+> creating new projects or bringing existing ones, whether I want project
+> context, and whether I'm joining a team. Prepare only the projects I select
+> and handle the setup and checks for me.
+
+For a new project instead of an existing repository, add:
+
+> I want to create a new project. Ask what I'm building and whether I want
+> a context folder. If I do, interview me and write the six tailored context
+> files inside my project folder, not in the IAC toolkit.
 
 The agent asks for a parent directory and workspace name, then clones into
 that exact destination. `team-workspace`, `my-hub`, and `my-projects` are
@@ -37,8 +137,9 @@ only examples, not mandatory names. It must not choose one silently.
 
 Keep the directory name you chose. Open your coding agent there and say:
 
-> Set up IAC in this folder. Read agentmail/SETUP_PROMPT.md, ask me for the
-> project URLs I want, and handle the setup. Keep this workspace name.
+> Set up IAC in this folder. Read agentmail/SETUP_PROMPT.md, ask whether I'm
+> creating a new project or bringing existing ones, and offer optional project
+> context. Handle the setup and keep this workspace name.
 
 You may clone projects manually before setup, or give their URLs to the
 agent and let it clone them. Existing folders are inspected and reused
@@ -48,8 +149,9 @@ with your agreement—not overwritten, moved or recloned automatically.
 
 1. **Confirms your workspace.** Preserves a manual clone's name; asks for
    name/location before an agent-managed clone. Never overwrites a destination.
-2. **Asks what you want locally.** Collects only your selected project URLs
-   or existing local paths. It does not clone every project in a team roster.
+2. **Asks what you want locally.** Collects selected project URLs, existing
+   paths, or the name/location of a new project. It does not clone every
+   project in a team roster. It offers optional tailored project context.
 3. **Asks whether you are joining a team.** For a team, requests the private
    mail-repository URL and your identity/site; otherwise sets up local mail.
    Missing access is reported, never bypassed.
@@ -71,14 +173,54 @@ agent handling your **setup request**, not a Git hook or background installer.
 When the user requests IAC onboarding, follow
 [agentmail/SETUP_PROMPT.md](agentmail/SETUP_PROMPT.md) end to end. Before an
 agent-managed clone, ask for workspace name/location if not supplied.
-After a manual clone, keep its existing name. Ask for selected project URLs
-and join-versus-create intent; then perform the authorized work rather than
+After a manual clone, keep its existing name. Ask new-versus-existing project
+intent, the relevant project details and team-joining intent; then perform the authorized work rather than
 returning a checklist of commands for the human to run.
+If the developer wants a new project, do not demand a repository URL. Offer
+the optional [project-context interview](agentmail/PROJECT_CONTEXT.md) and
+follow it only on opt-in. A “no” means no context files, not a blocked setup.
 
 Do not trigger onboarding during a code review, toolkit upgrade or clone-only
 request. Do not launch agents when prohibited. Missing credentials, remote
 seat approval or a remote reply are real dependencies—not permission to
 invent configuration or claim completion.
+
+### Optional context for organized development
+
+The agent asks whether you want context. If you say **yes**, it asks what
+you are building, who it is for, your platform/stack preferences, first-release
+scope, data/security needs, interface expectations and verification needs—in
+small rounds tailored to your answers. It summarizes the plan for confirmation
+and writes these six files inside **your project's `context/` directory**:
+
+| File | Purpose |
+| --- | --- |
+| `project-overview.md` | Product goals, users, scope, journeys and success criteria |
+| `architecture-context.md` | Stack, boundaries, data flow, storage and invariants |
+| `code-standards.md` | Language/framework conventions and quality checks |
+| `ui-context.md` | UI/platform behavior or API/CLI interactions for nonvisual projects |
+| `ai-workflow-rules.md` | Small-step implementation, uncertainty, approvals and verification |
+| `progress-tracker.md` | Actual progress, evidence, open questions, decisions and next steps |
+
+An Android app gets Android-relevant context; a Next.js project gets context
+for its chosen web stack. No sample app's vendors, palette or completed
+features are copied. New implementation starts as **not started**.
+
+If you say **no**, the agent skips this interview and continues your requested
+project setup without context files. Existing context is never overwritten
+without agreement. Project folders can be inside the workspace or elsewhere;
+the output is never a top-level `context/` folder in the IAC clone itself.
+
+See [the context workflow](agentmail/PROJECT_CONTEXT.md). Creating context
+does not build the app; the next step is an agreed, testable implementation
+task. The agent also offers to connect context to your existing project
+instructions, since arbitrary Markdown is not automatically read by every CLI.
+
+Want to see a filled-in example? Browse the
+[six-file web-project sample](agentmail/examples/web/README.md). It illustrates
+one hypothetical web app, not IAC's default stack or completed application
+work. The [generic skeletons](agentmail/templates/project-context/) remain
+separate; your agent tailors fresh files to your actual project.
 
 ### Joining your existing team: Sam's example
 
@@ -164,6 +306,8 @@ morning, not last night's confident lamps. See
 | File | What it covers |
 |---|---|
 | [`agentmail/SETUP_PROMPT.md`](agentmail/SETUP_PROMPT.md) | agent-led onboarding: chosen name, selected project URLs, team join and verification |
+| [`agentmail/PROJECT_CONTEXT.md`](agentmail/PROJECT_CONTEXT.md) | optional project interview and six tailored context files |
+| [`agentmail/examples/web/README.md`](agentmail/examples/web/README.md) | filled-in six-file web example; illustrative choices, no application code |
 | [`agentmail/README.md`](agentmail/README.md) | the mental model: actors, supervision, why files |
 | [`agentmail/SPEC.md`](agentmail/SPEC.md) | the wire protocol — maildir layout, headers, delivery rules |
 | [`agentmail/HANDOFFS.md`](agentmail/HANDOFFS.md) | research/Markdown handoffs and product versus technical authority |

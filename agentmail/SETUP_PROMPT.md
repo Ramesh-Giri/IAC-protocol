@@ -16,6 +16,10 @@ onboarding during toolkit maintenance, review or a clone-only request.
 - No project repositories are bundled or cloned by default. One or two
   selected projects are a complete valid setup. Team roster visibility is
   not a request to clone or launch all its projects.
+- Projects may also start as new, user-selected folders without a remote.
+  Offer optional six-file context per project; declining skips that step
+  completely. Personalized context belongs in PROJECT_ROOT/context/, not
+  the IAC clone's root or the toolkit. See [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md).
 - Ask only for missing information. A name, destination, URL or permission
   already supplied by the human should not be requested again.
 - Keep manual clone names. Ask for workspace name/location before an
@@ -78,9 +82,24 @@ an active dirty project just to fit a diagram.
 
 Ask these missing questions together, in ordinary language:
 
-> Which project repository URLs would you like me to clone and set up?
-> You can also give me paths to projects you already cloned.
+> Are you creating a new project, bringing existing projects, or both?
 > Are you joining an existing IAC team, or starting your own network?
+
+Keep the conversation to at most three short questions per round; collect
+details for the chosen branch next instead of asking everything at once.
+For existing projects, ask for the selected repository URLs or local paths.
+For new projects, ask for the project name and desired location if unknown.
+For each selected project, ask whether the human wants a personalized
+six-file `context/` folder or prefers to start without it. If yes, use
+[PROJECT_CONTEXT.md](PROJECT_CONTEXT.md): ask platform (web, Android, iOS,
+cross-platform mobile, backend, desktop or other), purpose and requirements,
+then tailor follow-ups to the answer. A framework such as Next.js refines a
+web choice; do not treat it as a requirement for every project.
+
+If no, do not run the context questionnaire or create templates. Continue
+the chosen blank-project, approved scaffold, or existing-repo setup normally.
+Do not require a project URL for a new local project or automatically create
+a GitHub repository for it.
 
 For a team join, ask for the **private mail-repository URL** and the human's
 identity/site if not supplied. Reuse any verified existing local mail clone
@@ -96,7 +115,7 @@ mail-only setup is valid when the human wants it. Do not fill an empty list
 with example repositories, every roster project or directories discovered
 nearby. Additional projects can be added later.
 
-## 3. Check prerequisites and clone only the selected projects
+## 3. Check prerequisites and prepare only the selected projects
 
 Check Python 3.9+, Git, supported macOS/Linux environment and available
 agent runtimes. Use the human's installed, authenticated CLI where suitable.
@@ -125,17 +144,39 @@ For each approved URL:
 6. Run the project's documented baseline checks where feasible. Record
    existing failures separately from IAC failures.
 
+For each requested new project, confirm its name and absolute destination
+separately from the IAC workspace name. Create only that approved project
+folder, after checking for collisions and reserved/toolkit/mail paths. It
+can be a workspace child or an external folder; it must not be the IAC root.
+Ask whether the developer wants a blank project or a framework scaffold if
+not already specified. Run an authorized scaffold before creating context
+when it needs an empty directory. Context consent alone does not authorize
+package installation, application implementation, Git initialization or a
+remote creation. Mark baseline tests unavailable until code/tooling exists;
+do not claim the new app is working just because its folder exists.
+
+For each context opt-in, complete the short interview and review summary in
+[PROJECT_CONTEXT.md](PROJECT_CONTEXT.md), then generate the six personalized
+files in that project's `context/`. Use the generic skeletons under
+`templates/project-context/`, not sample-product facts or completed work.
+Preserve existing context; ask before updating it. Check the files for
+consistency and unresolved template markers. Offer an approved reference
+from the project's agent instructions so future sessions know to read them.
+
 `agentmail-scan --root "/absolute/workspace" --all` is an optional read-only
 inventory after cloning. Its output is evidence, not authorization to
 onboard everything it finds. External project paths need direct inspection
 because the scanner covers immediate workspace children.
+An empty new project may not be detected by the scanner; retain it in the
+human's explicit selected-project list instead of silently dropping it.
 
 The resulting workspace may contain just:
 
 ```text
 chosen-name/
 ├── agentmail/       # toolkit, including lib/
-├── api/          # only the selected project; separate Git repository
+├── api/            # selected cloned or new project; its own lifecycle
+│   └── context/    # six tailored files, only if the human opted in
 └── .agent-mail/     # local spool or separate private mail Git clone
 ```
 
@@ -310,6 +351,9 @@ site, configured homes and mail state without a fatal snapshot error.
 
 Finish with a short status, not another installation checklist:
 - Chosen workspace path and selected projects, with their baseline results.
+- Context generated or declined for each project; show the generated path,
+  unresolved decisions and how future sessions will read it. A context-only
+  new project is planned, not an implemented application.
 - Local main/project seats and what is actually running.
 - Local mail result and, for a team, cross-site reply evidence.
 - Exact missing access/registration/login/approval if anything is pending.
@@ -328,8 +372,10 @@ Git remote and access rules.
 
 ## Adding another project later
 
-Ask for the new project's URL or existing path, clone/reuse only that project,
+Ask whether it is a new project or an existing URL/local path, prepare only that project,
 map it to the team roster, obtain any missing seat registration, extend
 `local.json.homes`, adapt local instructions and verify it. Preserve the
 workspace name, current mail network and existing projects. There is no need
 to rebuild the workspace or download the rest of the team's repositories.
+Offer the optional context step for that project without recreating other
+projects' context or forcing a developer who declined to adopt it.

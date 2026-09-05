@@ -1,0 +1,33 @@
+# {{PROJECT_NAME}} — Architecture Context
+
+## Status and evidence
+
+{{EXISTING_OBSERVATIONS_VERSUS_PROPOSED_DESIGN}}
+
+## Stack and rationale
+
+{{RELEVANT_LAYERS_TECHNOLOGIES_STATUS_AND_REASONS}}
+
+## System boundaries and data flow
+
+{{MODULE_RESPONSIBILITIES_DEPENDENCIES_AND_MAIN_FLOW}}
+
+## Data and storage
+
+{{DATA_OWNERSHIP_PERSISTENCE_LIFECYCLE_AND_SYNC_IF_NEEDED}}
+
+## Identity, permissions and trust boundaries
+
+{{AUTHORIZATION_VALIDATION_PRIVACY_AND_SECRET_HANDLING}}
+
+## Integrations and runtime behavior
+
+{{EXTERNAL_CONTRACTS_LIFECYCLE_OFFLINE_BACKGROUND_OR_FAILURE_BEHAVIOR}}
+
+## Invariants
+
+{{SMALL_SET_OF_TESTABLE_ARCHITECTURAL_RULES}}
+
+## Open decisions
+
+{{DECISIONS_TO_CONFIRM_AND_CONSEQUENCES}}
