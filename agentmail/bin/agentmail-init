@@ -45,6 +45,11 @@ for agent in "${AGENTS[@]}"; do
 done
 
 mkdir -p "$MAIL_DIR/archive" "$MAIL_DIR/bin"
+for pattern in '*/tmp/*' '/.locks/' '/local.json' '*/bridge.log'; do
+  if ! grep -qxF "$pattern" "$MAIL_DIR/.gitignore" 2>/dev/null; then
+    printf '%s\n' "$pattern" >> "$MAIL_DIR/.gitignore"
+  fi
+done
 touch "$MAIL_DIR/archive/.keep"
 
 for agent in "${AGENTS[@]}"; do

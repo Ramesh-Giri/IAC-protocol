@@ -19,6 +19,27 @@ from .state import (cadence, composite, depth_series, derive_liveness, derive_oc
 from .thresholds import *  # noqa: F401,F403
 from .util import GEN_ERRORS, dur, e, epoch_of
 
+
+def needs_reply(message):
+    if message.get("expects_reply") is not None:
+        return str(message["expects_reply"]).lower() == "true"
+    return message.get("ack") in ("requested", "yes") or message.get("type") in (
+        "task", "question", "proposal", "escalation", "handoff", "review")
+
+
+def answers(request, response):
+    if response.get("from") != request.get("to") or response.get("to") != request.get("from"):
+        return False
+    # An acknowledgement accepts work; it does not answer the request.
+    if response.get("type") in ("ack", "progress", "blocked"):
+        return False
+    if request.get("id"):
+        return response.get("in_reply_to") == request["id"]
+    if response.get("in_reply_to"):
+        return response["in_reply_to"] == request.get("file")
+    # Legacy heuristic, used only where a message ID was never recorded.
+    return bool(request.get("thread") and request.get("thread") == response.get("thread"))
+
 def build_model(doc: dict, out_path: str, args) -> dict:
     meta = doc.get("meta") or {}
     now = int(time.time())
@@ -391,6 +412,13 @@ def build_model(doc: dict, out_path: str, args) -> dict:
         for m in flow_by_thread.get(t.get("thread"), []):
             if m.get("timestamp") == t.get("last_message_at") and m.get("from") == frm:
                 ack = m.get("ack")
+        if not needs_reply({"type": t.get("last_message_type"), "ack": ack,
+                            "expects_reply": t.get("last_message_expects_reply")}):
+            continue
+        request = {"id": t.get("last_message_id"), "file": t.get("last_message_file"),
+                   "from": frm, "to": to, "thread": t.get("thread")}
+        if any(answers(request, m) for m in flow if m.get("timestamp", "") >= (t.get("last_message_at") or "")):
+            continue
         unread = bool(t.get("last_message_unread"))
         debts.append({
             "kind": "not-even-read" if unread else "read-not-replied",
@@ -400,28 +428,31 @@ def build_model(doc: dict, out_path: str, args) -> dict:
             "unread": unread, "unread_by": t.get("reply_owed_by") or [], "ack": ack,
             "copies": t.get("last_message_copies") or 1, "count": t.get("message_count"),
             "source": "thread bookkeeping (all time)",
+            "message_id": t.get("last_message_id"),
         })
     # per-message read-but-not-replied inside the mail window: a message the
     # recipient has opened and left, even though the thread moved on elsewhere.
     for th, msgs in flow_by_thread.items():
         msgs_sorted = sorted(msgs, key=lambda m: m.get("timestamp") or "")
         for i, m in enumerate(msgs_sorted):
-            if m.get("unread") or not m.get("to") or m.get("to") == m.get("from"):
+            if not m.get("to") or m.get("to") == m.get("from"):
                 continue
-            if m.get("ack") != "requested" and (m.get("type") not in ("task", "blocked")):
+            if not needs_reply(m):
                 continue
-            later = [x for x in msgs_sorted[i + 1:] if x.get("from") == m.get("to")]
+            later = [x for x in flow if answers(m, x) and x.get("timestamp", "") >= m.get("timestamp", "")]
             if later:
                 continue
-            if any(d["thread"] == th and d["owes"] == m.get("to") and d["epoch"] == epoch_of(m.get("timestamp"))
+            if any((d.get("message_id") == m["id"] if m.get("id") else
+                    d["thread"] == th and d["owes"] == m.get("to") and d["epoch"] == epoch_of(m.get("timestamp")))
                    for d in debts):
                 continue
             debts.append({
-                "kind": "read-not-replied", "owes": m.get("to"), "to": m.get("from"), "thread": th,
+                "kind": "not-even-read" if m.get("unread") else "read-not-replied", "owes": m.get("to"), "to": m.get("from"), "thread": th,
                 "synthetic": th is None, "epoch": epoch_of(m.get("timestamp")),
                 "age": m.get("age_seconds"), "subject": m.get("subject"), "type": m.get("type"),
-                "unread": False, "unread_by": [], "ack": m.get("ack"), "copies": 1,
+                "unread": bool(m.get("unread")), "unread_by": [], "ack": m.get("ack"), "copies": 1,
                 "count": len(msgs_sorted), "source": f"per-message, {meta.get('mail_window_hours', 48)}h window only",
+                "message_id": m.get("id"),
             })
     debts.sort(key=lambda d: (d["age"] is None, -(d["age"] or 0)))
 
@@ -490,9 +521,8 @@ def build_model(doc: dict, out_path: str, args) -> dict:
         if ms["occ"]["state"] == "spinning":
             alert("red", f"{sid} is SPINNING", ms["occ"]["detail"])
     for c in cycles:
-        alert("red", "DEADLOCK: reply cycle " + " → ".join(c),
-              "each seat in this ring is waiting for a reply from the next. Nobody in it will move without an "
-              "outside interrupt — this is exactly the shape the overseer/child escalation loop makes.")
+        alert("amber", "POSSIBLE WAIT CYCLE: " + " → ".join(c),
+              "Outstanding requests form a cycle. This does not prove work is blocked; check the tasks before intervening.")
     if dead:
         alert("amber", f"{len(dead)} dead letter(s)",
               "; ".join(f"{x['seat']}: {x['kind']} ({x['name']})" for x in dead[:6])

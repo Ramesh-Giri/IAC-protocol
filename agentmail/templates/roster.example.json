@@ -32,6 +32,12 @@
   "projects": {
     "api": {
       "description": "payments backend — can move money",
+      "decision_owners": {"product": "Alice Nakamura", "technical": "Bob Iyer"},
+      "delegation": {
+        "overseer-alice": "Clarify approved requirements; technical changes go to overseer-bob.",
+        "overseer-bob": "Choose implementation within agreed requirements and coordinate workers."
+      },
+      "repositories": {},
       "collaborators": [
         { "human": "Alice Nakamura", "site": "alice", "role": "owner" },
         { "human": "Bob Iyer", "site": "bob", "role": "contributor",

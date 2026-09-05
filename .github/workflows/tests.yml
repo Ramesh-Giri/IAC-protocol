@@ -24,6 +24,9 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
 
+      - name: transport and orchestration regression tests (offline)
+        run: python3 -m unittest discover -s agentmail/tests -v
+
       - name: unit tests
         working-directory: agentmail/dashboard
         run: python3 -m unittest discover -s tests -v

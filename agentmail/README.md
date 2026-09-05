@@ -2,14 +2,22 @@
 
 **File-based IPC and orchestration for multi-agent AI coding sessions.**
 
-> **Zero-to-running in one paste:** give your Claude Code session
-> [SETUP_PROMPT.md](SETUP_PROMPT.md) and it interviews you and builds the
-> whole network — seats, roster, identity files, self-test, launch commands.
+**Current protocol: 1.1.** Read [UPGRADE.md](UPGRADE.md) for existing networks
+and [HANDOFFS.md](HANDOFFS.md) for cross-developer research and decision ownership.
+The helpers require Python 3.9+ (stdlib only), Git, macOS/Linux; install this
+whole directory, including `lib/`. The [SPEC](SPEC.md) defines actual guarantees.
+
+> **Agent-led setup:** ask your coding agent to clone and set up IAC, or give
+> it [SETUP_PROMPT.md](SETUP_PROMPT.md) inside your manual clone. It asks for
+> the workspace name when needed, selected project URLs and team-mail access,
+> then handles the authorized cloning, configuration and checks. No projects
+> are bundled or cloned by default; one or two are enough. It keeps a manual
+> clone's name and reports pending access/registration instead of claiming ready.
 
 AgentMail lets multiple AI coding agents (Claude Code sessions or similar),
 each owning a different repository, coordinate like processes on an operating
 system: durable message passing, live wake-ups, and a supervisor hierarchy —
-with nothing but a shared directory. No broker, no daemon, no database.
+with a shared directory. No broker or database; watchers/bridges/sync are optional processes.
 
 ```
                         ┌──────────┐
@@ -23,7 +31,7 @@ with nothing but a shared directory. No broker, no daemon, no database.
    │ child A │   │ child B │   │ child C │   │ child D │
    │ repo A  │   │ repo B  │   │ repo C  │   │ repo D  │
    └─────────┘   └─────────┘   └─────────┘   └─────────┘
-     autonomous mode, guarded by deny-rules + escalation hooks;
+     runtime-specific permissions and explicitly delegated work;
      model tier assigned per project/task by the parent
 ```
 
@@ -43,12 +51,11 @@ telecom switches on for 30+ years:
 | "Let it crash" + supervisor restarts | Sessions die freely; mailboxes and in-flight tasks survive; the parent re-dispatches |
 | Selective receive | Reading `new/` oldest-first, acting per message `type` |
 
-Why it fits: actors assume **no shared state** (each agent owns its repo —
-enforced), **asynchrony** (agents are rarely alive at the same moment), and
+Why it fits: actors encourage **separate owned state** (repo boundaries must
+be enforced by runtime/OS permissions), **asynchrony**, and
 **failure as a first-class event** (sessions end constantly; supervision
 handles it). Secondary influences: the *microkernel* idea that the trusted
-core should be minimal (here: a directory and one atomic `rename()` — too
-small to fail interestingly), and the *blackboard* idea that shared,
+core should be minimal (here: files and small standard-library helpers), and the *blackboard* idea that shared,
 inspectable artifacts beat opaque channels.
 
 ## Why files?
@@ -58,9 +65,9 @@ alive at once — agent sessions start and die constantly. Brokers (Redis,
 NATS) add an infrastructure dependency and hide messages inside a service.
 A shared directory, used with **Maildir semantics**, gives you:
 
-- **Durability** — messages survive any agent, machine, or session crash.
-- **Atomicity** — `rename()` within a filesystem is atomic; a reader never
-  sees a half-written message, and concurrent senders can't corrupt anything.
+- **Durability** — delivered files outlive sessions; back up important mail.
+- **Atomicity** — complete files are linked into the inbox without overwrite;
+  cooperating helpers use locks. Task execution is not exactly-once.
 - **Auditability** — every message is a human-readable Markdown file; the
   whole conversation history is `grep`-able and can live in git.
 - **Zero infrastructure** — works on a laptop, a shared VM, or a synced
@@ -137,7 +144,7 @@ the mail is universal, the leash is vendor-specific.
 Multiple developers, each with their own supervision tree, form **one mail
 network** by making `.agent-mail/` a shared private git repository — see
 [FEDERATION.md](FEDERATION.md). Maildir's unique immutable filenames make
-git sync conflict-free by construction; a dumb `mail-sync` daemon
+ordinary Git collisions unlikely, but conflicts remain possible; a `mail-sync` loop
 (pull–rebase–push on an interval) is the entire transport, and arriving
 mail triggers the same local watchers as same-machine mail. Cross-site
 etiquette: technical facts flow agent-to-agent; commitments flow

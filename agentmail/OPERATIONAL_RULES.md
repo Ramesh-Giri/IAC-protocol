@@ -1,12 +1,20 @@
 # AgentMail — Operational Rules
 
+**1.1 update:** [SPEC.md](SPEC.md) and [UPGRADE.md](UPGRADE.md) take precedence
+over historical operating advice below. Use `--body-file` or quoted heredocs
+for safe Markdown transfer. Research/requirements/implementation are distinct
+intents, and ownership is domain-specific; see [HANDOFFS.md](HANDOFFS.md).
+
 *Rules learned from running AgentMail networks in production, including cross-developer git federation. These are system-level and apply to any deployment. They complement the protocol in `SPEC.md` and the federation model in `FEDERATION.md` — this file is the "what bit us and how not to repeat it" layer.*
 
 ---
 
 ## 1. Timestamp every message, and record send-time in git
 
-Every message carries a `sent:` UTC timestamp in its front matter and filename (SPEC §3). In a git-federated store, **set the commit's author *and* committer date to that `sent:` timestamp** when committing a message, so `git log --date` reflects when a message was *sent*, not merely when it was pushed. Without this, a message written hours before a push shows the push time in history, and the send-order is lost across the async gap.
+Every message carries a `sent:` UTC timestamp in its frontmatter and filename.
+Read that field for send time; Git commit time records synchronization and
+may cover multiple messages. Do not forge commit dates to imply delivery or
+causal order. UUIDs identify messages; `in_reply_to` identifies causal replies.
 
 ## 2. Never put shell substitution in a message body
 
