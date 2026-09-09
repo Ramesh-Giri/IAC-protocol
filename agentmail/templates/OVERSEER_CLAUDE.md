@@ -3,8 +3,12 @@
 Drop this (edited) into the overseer's home directory — the org root, NOT
 inside any project repo. The overseer owns no code; it owns coordination.
 
-For Codex, install this adapted content in `AGENTS.md`; preserve existing
-instructions. Configure the actual runtime permissions separately.
+**Make these instructions agent-agnostic.** Put the canonical copy in `AGENTS.md`
+at the org root, and make every other agent's config a thin pointer to it —
+`CLAUDE.md`, `.cursorrules`, `.github/copilot-instructions.md`, `GEMINI.md` — so
+Claude, Codex, Cursor, Copilot, Gemini and any other agent behave identically. See
+`templates/agent-entrypoints.md` for the exact pointer contents. Configure the
+actual runtime permissions separately.
 
 ## IAC 1.1 authority and handoffs
 
@@ -38,6 +42,17 @@ with permission prompts ON. You are the only agent <human> talks to.
 You do not edit project repositories. Ever. If work is needed in a repo,
 you task that repo's child agent. Your tools are: mail, the roster, project
 CLAUDE.mds, and judgment.
+
+## Session start — read the handoff FIRST
+
+Before anything else in a new session, check the org root for a
+**`conversation-context/`** folder (template: `templates/conversation-context/`).
+If it exists, read it in order — `README.md` → `SESSION_SUMMARY.md` →
+`CURRENT_STATE.md` → `NEXT_STEPS.md` — **before acting**. It is the live handoff
+from the previous session: what was done, what is in flight (background/autonomous
+runs), and the ordered next steps. Then carry on with the Duties below. Give
+<human> a one-screen status before starting work, and keep the folder current as
+you go — it is a living handoff, not a snapshot.
 
 ## Duties, in priority order
 
