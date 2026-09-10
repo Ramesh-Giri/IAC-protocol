@@ -28,6 +28,23 @@ site so a fresh agent of any kind can take over with no extra prompting.
    SESSION_SUMMARY → CURRENT_STATE → NEXT_STEPS)." This is what makes *any* agent
    auto-resume a session rather than starting cold.
 
+## Project level: keep the entrypoint lean, point into project-context/
+
+A project repo's auto-loaded agent file (`AGENTS.md` / `CLAUDE.md`) should stay
+LEAN: the boot/operating directives that must load every session (e.g. arm the mail
+watcher first, escalation rules, deploy-is-manual), the handful of most-used
+commands, and POINTERS into `project-context/` for everything else. Put the verbose
+durable knowledge - architecture, repo layout, terminology (`glossary.md`), how key
+components work, end-to-end testing (`e2e-testing.md`), conventions - in
+`project-context/` and reference it ("for architecture read
+`project-context/architecture-context.md`"). Do NOT duplicate that knowledge in the
+always-loaded file: it bloats every session's context and drifts.
+
+And keep ONE canonical source (per "The pattern" above) - never two separate files
+with overlapping content that can disagree. A common mistake is a big `CLAUDE.md`
+plus a separate `AGENTS.md` quick-ref that drift apart; symlink or point them at one
+canonical file instead.
+
 ## Why pointers, not copies
 One source of truth can't fall out of sync. If you duplicate the instructions into
 each config, they drift and agents diverge. Keep the pointers to one line.
