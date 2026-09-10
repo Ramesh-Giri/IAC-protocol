@@ -41,6 +41,26 @@ it, and check each project's own security scan.
   an **isolated worktree** and treat output as a **draft for review**, never an
   auto-merge. Set `GNHF_TELEMETRY=0`. Install: `npm install -g gnhf`.
 
+### Running a long / overnight autonomous run safely
+An autonomous loop optimizes its literal per-iteration reward ("one green commit"),
+NOT value-per-hour — so without guardrails it chases the cheapest next commit
+(endless edge-case hardening on already-done work) instead of advancing, never
+converges, and burns the budget. (Learned the hard way: a run once spent ~6 of ~10h
+gold-plating finished phases and never started the last one.) When you launch one:
+- **Scope to ONE phase per run; review between** — don't hand it a whole multi-phase
+  job open-ended.
+- **Cap iterations to the real size of the work** (~15–25). The cap is the true
+  stopper — do NOT trust `--stop-when` to fire.
+- **Name what's DONE and off-limits** ("Phases A/B are finished — do NOT touch or
+  harden them") and add an **anti-gold-plating** rule ("a reasonable, tested
+  implementation is the goal; if you're closing a gap on already-working code, STOP;
+  prefer finishing over polishing").
+- **Order + advance:** do phases in order; when a phase's core works, move on.
+- Keep the guardrails: isolated worktree, flags default-off, no push/merge (draft for
+  review), stop-and-report on genuine decisions.
+- Judge the run by "did it advance the objective," not commit/test count — those
+  inflate with gold-plating.
+
 ## Adjacent (not part of the code loop)
 - **skill-creator** — author/improve agent skills. `npx skills add
   anthropics/skills --skill skill-creator -g`.
