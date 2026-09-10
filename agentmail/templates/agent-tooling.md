@@ -18,7 +18,13 @@ it, and check each project's own security scan.
 
 - **treehouse** — a pool of reusable, pre-warmed git worktrees so agents get an
   instant isolated environment (`treehouse get` / `treehouse return`) instead of
-  re-cloning or hand-rolling `git worktree`. Install: `curl -fsSL
+  re-cloning or hand-rolling `git worktree`. **Standing rule: when an agent needs
+  an isolated or parallel worktree, it uses `treehouse`, never a hand-rolled
+  `git worktree add`** — the raw command leaves orphan worktree dirs + branches to
+  clean up, gets no warm cache, and is exactly what treehouse replaces. `git
+  worktree` is only for inspecting an existing checkout; any new isolated
+  environment goes through `treehouse get`/`return` (`treehouse init` writes the
+  per-repo config the first time). Install: `curl -fsSL
   https://kunchenguid.github.io/treehouse/install.sh | sh` (review the script
   first) or `go install github.com/kunchenguid/treehouse@latest`.
 - **gh-axi** (from AXI, https://axi.md) — wraps the official `gh` with
