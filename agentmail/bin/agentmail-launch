@@ -90,6 +90,14 @@ def build_command(seat: dict, mail_root: str) -> str:
             parts += ["--model", seat["model"]]
         if seat.get("_skip_permissions") and not parent:
             parts.append("--dangerously-skip-permissions")
+        if not parent:
+            # A child talks to NO human — decisions escalate to the overseer by mail.
+            # Remove the interactive-question tool so a child physically cannot prompt
+            # the operator (instruction alone has failed; this is the hard guarantee).
+            parts += ["--disallowedTools", "AskUserQuestion"]
+            # A child's cwd is its project sub-repo, but it must read the shared mail
+            # root and these helpers, which live in the org root above it. Grant it.
+            parts += ["--add-dir", str(Path(mail_root).resolve().parent)]
         parts.append(prompt)
     elif runtime == "codex-cli":
         if seat.get("_skip_permissions"):
