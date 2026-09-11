@@ -502,6 +502,24 @@ softer than a sandbox.
 If that is not a trade you want to make, answer "no" at setup: every action
 then prompts in that project's terminal. The overseer always prompts.
 
+**Reads outside a child's own project.** Each child's working directory is its
+own project repo, but it must read the shared mail spool (`.agent-mail/`) and the
+`agentmail/bin` helpers, which live in the org root *above* that repo. If your
+coding-agent host enforces a "no reads outside the working directory" policy
+(for example Claude Code's `permissions.blockReadsOutsideWorkingDirectories`), a
+child stops to ask on every mail read — and with `--dangerously-skip-permissions`
+it **stalls unattended**, because that block is a separate gate `--skip-permissions`
+does not override, it fires even on shell paths built at runtime that are
+actually inside the org, and a per-project settings file cannot relax a global
+one. To run the fleet unattended, that block must be **off** in the host's global
+settings. There is no single setting that both blocks the parent directory and
+never prompts on in-org dynamic paths — an unattended fleet needs it off, and the
+parent-directory boundary then rests on the seats' instructions, not the sandbox.
+Launch note: start children in a per-project `tmux` session
+(`agentmail-launch … --terminal tmux`); a headless tmux child is viewable by
+attaching a terminal (`tmux attach -t <project>`). See
+[`agentmail/OPERATIONAL_RULES.md`](agentmail/OPERATIONAL_RULES.md) rules 9–10.
+
 Local mail and the dashboard work from files on your disk without a mail
 server. Optional `mail-sync` does contact the configured Git remote and
 publishes the shared channel's messages; setup cloning also uses the network.
