@@ -76,6 +76,24 @@ Two fixes, apply both:
 - **Root cause:** silence the startup prompt (`zstyle ":omz:update" mode disabled`, `DISABLE_AUTO_UPDATE=true`, `DISABLE_UPDATE_PROMPT=true`). These must be placed **BEFORE** `source $ZSH/oh-my-zsh.sh` — appended after it they are read too late and do nothing, which is its own half-hour of confusion. Verify with `zsh -i -c 'echo OK'`: nothing but your own output may appear.
 - **Mechanism:** ship a `.command` file (`chmod +x`, `open -a Terminal <file>`). It is **executed** rather than typed, so no keystroke can be eaten by anything — it is robust even on a machine whose shell startup you do not control, which is the reason to keep using it after the prompt is fixed. Have it build the session (holder window first, per rule 9), launch each seat, then `exec tmux attach` so the window the operator is looking at *is* the session.
 
+## 14. Recycling ONE seat must not kill its neighbours
+
+`tmux kill-pane` on a window that holds other live seats **destroys the window when the last pane goes**, taking working agents with it. In the incident that produced this rule the supervisor killed a reviewer seconds after dispatching it a review — the mail survived (it is a file), the agent's in-context work did not. The `keep` holder window (rule 9) guards the SERVER, not a shared window; panes need their own discipline.
+
+To recycle one seat: `pkill -f "agentmail-run --seat <seat>"`, relaunch it, then `tmux join-pane` it back into the shared window. **Never `kill-pane`** while another seat shares that window. Afterwards verify BOTH seats, not the one you touched — count monitors per seat (`pgrep -f "agentmail-run --seat <seat>" | wc -l`, exactly 1 each, rule 4) and read each pane's own banner for the model it is really running. A supervisor that changes one seat and reports success without re-checking the others will ship a fleet in a state it never inspected; the operator finds it before you do.
+
+## 15. Verify the SUBJECT, and read raw output before believing your own summary
+
+This file's closing lesson applies to the SUPERVISOR as hard as to the code it reviews, and is the rule most often broken by whoever is enforcing it. Two failure shapes, both of which ship as evidence:
+
+**(a) A check whose subject is not the thing at risk.** Renaming a plugin directory to disable it, when the loader reads the manifest inside and not the directory name. Appending a config setting *after* the line that consumes it. Reporting a fleet "running" from `tmux ls` when the operator needs `tmux list-clients`. Confirming one seat's model and reporting the fleet correct. Before claiming anything is done, ask: **what would this check report if the thing had failed?** If the answer is "the same", it is not a check.
+
+**(b) Trusting a pass/fail label over the output beneath it.** A capability probe that reported every model id `REJECTED` had actually died on `Not inside a trusted directory` and never reached a model — the label was read, the error was not. Worse, that false result was then used to tell the operator his instruction was impossible; he disproved it from his own screen. **When a finding concludes the user's request cannot be done, suspect the finding before the request.**
+
+Two corollaries earned the same day:
+- **Several failures that look different may be one bug.** `command not found: mux`, `no such file: Users/x`, `command not found: xec` were chased as three problems; exactly one character was missing from each, and the cause was a startup prompt eating a keystroke (rule 13). Compare failures to each other before theorising about any one of them.
+- **Never ask the operator to look something up that a command can answer.** Enumerate the capability, read the cache, parse the config. Asking a human to open an interactive picker and describe it is not a capability check, and it spends the one resource the supervisor exists to conserve.
+
 ---
 
 *A recurring meta-lesson behind several of these: a guard or field that reads **prose** instead of **behaviour** — a check that passes because a name appears in a docstring, a column that cannot change while claiming to track a changing thing — is worse than none, because it ships as evidence. Test a guard by trying to break it; if you have not tried, it is not evidence.*
