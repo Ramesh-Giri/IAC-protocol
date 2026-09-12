@@ -102,7 +102,13 @@ def build_command(seat: dict, mail_root: str) -> str:
     elif runtime == "codex-cli":
         if seat.get("_skip_permissions"):
             raise ValueError("Codex keeps its sandbox; use normal permissions for this seat")
-        parts = ["codex", "--sandbox", "workspace-write", "--ask-for-approval", "on-request",
+        # `never`, not `on-request`: a child must not be able to block on a human
+        # (rule 12). on-request stalls the seat waiting on an operator who is not
+        # watching its pane -- the Codex equivalent of the AskUserQuestion problem.
+        # The SANDBOX is what keeps this safe, and it is retained: workspace-write
+        # is a real boundary, so an unattended Codex seat is better contained than
+        # a Claude child running --dangerously-skip-permissions.
+        parts = ["codex", "--sandbox", "workspace-write", "--ask-for-approval", "never",
                  "--add-dir", mail_root]
         if seat.get("model"):
             parts += ["--model", seat["model"]]
