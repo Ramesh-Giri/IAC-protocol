@@ -89,8 +89,14 @@ there is a BLOCKED commit and an undeployed 20-commit set waiting on Ramesh.
 - **The fleet is in macOS Terminal.app** — tmux session `circle`, both child seats
   as side-by-side panes in the `agents` window. He must be able to SEE every seat;
   a detached session is not "running" (rule 13).
-- **You (this overseer) run in Terminal.app**, launched by
-  `agentmail/bin/overseer-astra.command`.
+- **You (this overseer) run in iTerm2**, launched with
+  `open -a iTerm agentmail/bin/overseer-astra.command`.
+  **PLACEMENT RULE (Ramesh, 2026-09-12):** *"the main agent should be open
+  wherever the fuck u are and not other app."* The overseer opens in **the
+  terminal Ramesh himself is using** (iTerm2) — he drives it directly. **Child
+  seats go in Terminal.app** (tmux `circle`), which he only watches. Putting the
+  main agent in the children's window makes him go hunting for the one seat he
+  actually talks to.
 - The outgoing Claude overseer was a **background job** in the ClaudeCode daemon,
   attached to no window — which is why he could not see it.
 
