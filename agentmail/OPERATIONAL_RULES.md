@@ -94,6 +94,20 @@ Two corollaries earned the same day:
 - **Several failures that look different may be one bug.** `command not found: mux`, `no such file: Users/x`, `command not found: xec` were chased as three problems; exactly one character was missing from each, and the cause was a startup prompt eating a keystroke (rule 13). Compare failures to each other before theorising about any one of them.
 - **Never ask the operator to look something up that a command can answer.** Enumerate the capability, read the cache, parse the config. Asking a human to open an interactive picker and describe it is not a capability check, and it spends the one resource the supervisor exists to conserve.
 
+## 16. An agent must be able to say WHERE it is running — and must not be talked out of a verified finding
+
+Asked which terminal it was on, a supervisor answered with the *fleet's* terminal, then with "no terminal attached", then with the wrong application twice. All four answers were produced confidently, and the operator had to correct each one. An agent that cannot locate itself will answer questions about the operator's screen with facts about some other process — and will report a fleet as "running" that nobody can see (rule 13).
+
+**The checks that work** (`agentmail/bin/whereami` implements them):
+- **Environment variables prove nothing.** A background job has no `TERM_PROGRAM` and no `TMUX`; their absence is not evidence of anything.
+- **Walk the process tree to the session process.** Reading the tty of your own spawned subprocess reports `??` because it is detached — that is not your session's tty.
+- **A genuine window has a `login` session leader on its tty.** No login leader means a daemon-allocated PTY: a background job, invisible to the operator.
+- **`login` does not identify the application.** Terminal.app and iTerm2 both spawn it. Resolve the login process's **parent** — `iTermServer` means iTerm2, `Terminal` means Terminal.app. Inferring the app from the leader alone is a check whose subject is not the thing asked about (rule 15).
+- **`System Events … background only is false` under-reports**; it omitted a running iTerm2. Scan `ps` for terminal emulators rather than trusting that listing.
+- **Name which process you are describing.** "The operator's client", "this session", and "the fleet's windows" are three different answers to one question.
+
+**And the harder half.** The first answer above was *correct about the host app*, and the supervisor abandoned it when the operator pushed back — then argued its way to a wrong one. **Being talked off a verified finding is worse than the original error**, because the evidence was already in hand. When contradicted: re-examine and re-run the check. If the evidence still holds, say so plainly and show it; if it does not, say precisely what changed. The operator is usually right about their own machine — but the route to their answer is fresh evidence, never deference. Never claim something is proven when it is inferred; label an inference as one.
+
 ---
 
 *A recurring meta-lesson behind several of these: a guard or field that reads **prose** instead of **behaviour** — a check that passes because a name appears in a docstring, a column that cannot change while claiming to track a changing thing — is worse than none, because it ships as evidence. Test a guard by trying to break it; if you have not tried, it is not evidence.*
