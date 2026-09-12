@@ -2,7 +2,7 @@
 # Start the OVERSEER seat on Codex / gpt-6-astra in a visible Terminal window.
 # Executed, not typed (a shell startup prompt eats the first keystroke -- rule 13).
 cd /Users/darkness/Work/Aureus
-exec /opt/homebrew/bin/codex \
+exec "$(command -v codex)" \
   --sandbox workspace-write --ask-for-approval never \
   --add-dir /Users/darkness/Work/Aureus/.agent-mail \
   --model gpt-6-astra \

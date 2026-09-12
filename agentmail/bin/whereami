@@ -104,6 +104,49 @@ def main() -> int:
     except Exception:
         pass
 
+    # WHICH terminal app owns a tty: resolve the `login` leader's PARENT.
+    # Both Terminal.app and iTerm2 spawn `login`, so the presence of a login
+    # leader says "a real window" and says NOTHING about which app -- inferring
+    # Terminal.app from it named the wrong application twice on 2026-09-12.
+    def _tty_owner(tty_: str) -> str:
+        try:
+            rows = subprocess.run(["ps", "-eo", "pid=,tty=,comm="], capture_output=True,
+                                  text=True, timeout=5).stdout.splitlines()
+        except Exception:
+            return "unknown"
+        for r in rows:
+            f = r.split()
+            if len(f) >= 3 and f[1] == tty_ and f[-1].endswith("login"):
+                pp = ps("ppid=", int(f[0])).strip()
+                if pp:
+                    owner = ps("comm=", int(pp))
+                    low = owner.lower()
+                    if "itermserver" in low or "iterm" in low:
+                        return "iTerm2"
+                    if "terminal" in low:
+                        return "macOS Terminal.app"
+                    return owner.split("/")[-1] or "unknown"
+        return "no window (daemon PTY)"
+
+    print(f"tty owner    : {_tty_owner(tty)}")
+    if bg:
+        # A background job's own PTY has no owning app; the ORIGINATING terminal is
+        # where the operator actually sits. Report it, labelled as an inference.
+        owners = set()
+        try:
+            rows = subprocess.run(["ps", "-eo", "pid=,tty=,comm="], capture_output=True,
+                                  text=True, timeout=5).stdout.splitlines()
+            for r in rows:
+                f = r.split()
+                if len(f) >= 3 and f[1] != "??" and f[-1].split("/")[-1] in ("claude", "codex"):
+                    o = _tty_owner(f[1])
+                    if o not in ("unknown", "no window (daemon PTY)"):
+                        owners.add(o)
+        except Exception:
+            pass
+        if owners:
+            print(f"likely operator terminal: {', '.join(sorted(owners))}"
+                  "  (inferred from interactive agent sessions, not proven)")
     print(f"host app     : {host}")
     print(f"session kind : {'BACKGROUND job (no terminal attached)' if bg else 'foreground'}")
     if job:
