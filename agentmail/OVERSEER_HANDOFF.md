@@ -74,6 +74,28 @@ consumer, and its cost is dominated by long context (88% of usage was at >150k).
 
 ## 5. Live state — UPDATE THIS
 
+## Codex takeover update - 2026-09-12 11:57 UTC
+
+Ramesh directly transferred the overseer seat to Codex/gpt-6-astra in this session.
+This update supersedes older live-state claims below; historical project instructions are not renewed production authorization.
+The full OVERSEER_HANDOFF.md, OPERATIONAL_RULES.md, global guidelines and conversation-context handoff were read.
+Eleven unread messages were drained and reconciled; no legacy .agent-mail/overseer-ramesh-inbox.md exists.
+Local Circle HEAD is 27216044; the local origin/main reference is 3128172d29edc50c54348e9238e42f8b04af13ea.
+Production at eef72827 is inherited handoff evidence, not freshly verified; no successful 3128172d deploy receipt was found in the drained mail.
+The 20-commit deploy packet remains .agent-mail/attachments/DEPLOY_BLOCK_glm.md, for Ramesh's manual VM session.
+27216044 remains blocked by review: Ollama plain 429 refusal and monitor balance-exhaustion cooldown/reactivation.
+Circle was tasked to reproduce and repair within the existing scope, submit monitor state/migration/recovery design before that implementation, and keep the discovery-guard correction separate.
+Reviewer was asked to confirm readiness and resolve its missing pytest/cryptography environment before behavioral verification.
+Requests: c8c6a51f-96e0-421d-8e1a-541f079a706c and 7e0bfe36-0c91-4660-82fc-85c048d3609a; acknowledgements and ETAs pending.
+No new product implementation or production actions were performed by the overseer.
+
+Watcher takeover is INCOMPLETE.
+mail-watch refused a duplicate because the kernel watch-overseer-ramesh lock is held; lsof identified Python PID 20453.
+Stopping PID 20453 was denied by this sandbox (operation not permitted); process enumeration and tmux socket inspection are also denied.
+Do not claim this session is receiving persistent mail notifications or that the fleet is visible/live based on old handoff claims.
+Continue direct mail-read at every turn; the operator must stop the old watcher outside the sandbox before this session can arm the canonical watcher.
+
+
 **As of 2026-09-12 ~18:05 (Asia/Katmandu). THIS IS A LIVE HANDOFF —** Ramesh moved
 the overseer seat to **Codex / gpt-6-astra** to preserve the Claude remainder
 (79% of the week already spent, resets Sep 13 21:45). The outgoing Claude/Opus-5
@@ -105,7 +127,7 @@ there is a BLOCKED commit and an undeployed 20-commit set waiting on Ramesh.
 |---|---|---|---|
 | `circle-ramesh` | codex-cli | gpt-5.6-terra | live |
 | `circle-review-ramesh` | codex-cli | gpt-5.6-terra | live |
-| overseer | claude-code | opus-5 | live, 21% of week left |
+| overseer | Codex | gpt-6-astra | current user-facing session; watcher takeover blocked by sandbox |
 
 Both children are panes in the `agents` window of tmux session `circle`.
 
