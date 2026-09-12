@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+"""Report WHERE this agent is actually running: host app, TTY, tmux, job id.
+
+An agent that cannot say where it runs will answer questions about the operator's
+screen with facts about someone else's. 2026-09-12: asked which terminal it was
+in, the overseer reported the only GUI terminal it could see -- which was the
+FLEET's terminal, not its own. It was in fact a background job inside the desktop
+app, attached to no terminal at all. Environment variables alone do not tell you:
+a background session has no TERM_PROGRAM and no TMUX. Walk the process tree.
+"""
+from __future__ import annotations
+import os, re, subprocess, sys
+
+def ps(fmt: str, pid: int) -> str:
+    try:
+        return subprocess.run(["ps", "-o", fmt, "-p", str(pid)],
+                              capture_output=True, text=True, timeout=5).stdout.strip()
+    except Exception:
+        return ""
+
+def ancestry(pid: int, limit: int = 15):
+    chain = []
+    for _ in range(limit):
+        line = ps("ppid=,comm=", pid)
+        if not line:
+            break
+        parts = line.split(None, 1)
+        if len(parts) < 2:
+            break
+        ppid, comm = int(parts[0]), parts[1]
+        chain.append((pid, comm))
+        if ppid <= 1:
+            break
+        pid = ppid
+    return chain
+
+def main() -> int:
+    chain = ancestry(os.getpid())
+    host, detail = "unknown", ""
+    for _pid, comm in chain:
+        low = comm.lower()
+        if "claudecode.app" in low:
+            host = "Claude Code desktop app"; break
+        if "iterm" in low:
+            host = "iTerm2"; break
+        if "terminal.app" in low or low.endswith("/terminal"):
+            host = "macOS Terminal.app"; break
+        for name in ("ghostty", "warp", "kitty", "alacritty", "wezterm", "code helper", "vscode"):
+            if name in low:
+                host = comm; break
+        else:
+            continue
+        break
+
+    top = chain[-1][0] if chain else os.getpid()
+    cmd = ps("command=", top)
+    bg = "--bg-pty-host" in cmd
+    job = ""
+    m = re.search(r"/pty/([0-9a-f-]+)\.sock", cmd)
+    if m:
+        job = m.group(1)
+
+    tty = ps("tty=", os.getpid()) or "??"
+    print(f"host app     : {host}")
+    print(f"session kind : {'BACKGROUND job (no terminal attached)' if bg else 'foreground'}")
+    if job:
+        print(f"job id       : {job}")
+    print(f"tty          : {tty}")
+    print(f"TERM_PROGRAM : {os.environ.get('TERM_PROGRAM', '<unset>')}")
+    print(f"inside tmux  : {'yes -> ' + os.environ['TMUX'].split(',')[0] if os.environ.get('TMUX') else 'no'}")
+    print("\nprocess ancestry (nearest first):")
+    for pid_, comm in chain:
+        print(f"  {pid_:>7}  {comm}")
+    if bg:
+        print("\nNOTE: a background session is invisible to the operator. Do not report"
+              "\nanother process's terminal as your own, and do not claim a fleet is"
+              "\n'running' on the strength of a session nobody can see (rule 13).")
+    return 0
+
+if __name__ == "__main__":
+    raise SystemExit(main())
