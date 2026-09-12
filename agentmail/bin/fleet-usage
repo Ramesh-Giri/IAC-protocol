@@ -1,0 +1,78 @@
+#!/usr/bin/env python3
+"""Report REMAINING budget on every runtime the fleet can run on.
+
+Why this exists: the supervisor kept spending one provider's quota while another
+sat untouched, and could not answer "how much is left?" without asking the
+operator to read an interactive screen. Neither CLI exposes usage as a
+subcommand -- it lives behind an in-session slash command -- so drive a
+throwaway session in a detached tmux window, scrape it, and kill it.
+
+    fleet-usage [--session <tmux session>]
+
+Reads only. Costs ~nothing: /usage and /status are UI commands, not model calls.
+"""
+from __future__ import annotations
+import argparse, re, shutil, subprocess, sys, time, uuid
+
+def tmux(*a, **kw):
+    return subprocess.run(["tmux", *a], capture_output=True, text=True, **kw)
+
+def probe(session: str, binary: str, command: str, boot_wait: int, read_wait: int) -> str:
+    win = f"usage-{uuid.uuid4().hex[:6]}"
+    tmux("new-window", "-d", "-t", session, "-n", win)
+    try:
+        tmux("send-keys", "-t", f"{session}:{win}", "-l", binary)
+        tmux("send-keys", "-t", f"{session}:{win}", "Enter")
+        time.sleep(boot_wait)
+        # A CLI that auto-updates exits on first run; re-invoke once.
+        pane = tmux("capture-pane", "-p", "-t", f"{session}:{win}").stdout
+        if "restart" in pane.lower() or "update ran successfully" in pane.lower():
+            tmux("send-keys", "-t", f"{session}:{win}", "-l", binary)
+            tmux("send-keys", "-t", f"{session}:{win}", "Enter")
+            time.sleep(boot_wait)
+        tmux("send-keys", "-t", f"{session}:{win}", "-l", command)
+        time.sleep(1)
+        tmux("send-keys", "-t", f"{session}:{win}", "Enter")
+        time.sleep(read_wait)
+        return tmux("capture-pane", "-p", "-t", f"{session}:{win}").stdout
+    finally:
+        tmux("kill-window", "-t", f"{session}:{win}")
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--session", default="circle")
+    args = ap.parse_args()
+
+    if not shutil.which("tmux"):
+        print("tmux not found", file=sys.stderr); return 1
+    if tmux("has-session", "-t", args.session).returncode != 0:
+        tmux("new-session", "-d", "-s", args.session, "-n", "keep")
+
+    print("=== CLAUDE ===")
+    claude = shutil.which("claude")
+    if not claude:
+        print("  claude not installed")
+    else:
+        out = probe(args.session, claude, "/usage", 14, 8)
+        rows = [l.strip() for l in out.splitlines()
+                if re.search(r"\d+%\s*used|Resets|weekly limit|Current (week|session)", l)]
+        print("\n".join("  " + r for r in rows) if rows
+              else "  could not read /usage (pane did not render in time)")
+
+    print("\n=== CODEX ===")
+    codex = shutil.which("codex")
+    if not codex:
+        print("  codex not installed")
+    else:
+        out = probe(args.session, codex, "/status", 16, 8)
+        rows = [l.strip(" │") for l in out.splitlines()
+                if re.search(r"limit:|Account:|Model:", l)]
+        print("\n".join("  " + r for r in rows) if rows
+              else "  could not read /status (pane did not render in time)")
+
+    print("\nSpend the one with headroom. Claude and Codex are SEPARATE budgets;")
+    print("burning one while the other idles is the waste this tool exists to stop.")
+    return 0
+
+if __name__ == "__main__":
+    raise SystemExit(main())
