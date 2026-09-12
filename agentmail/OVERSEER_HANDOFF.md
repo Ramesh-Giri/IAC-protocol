@@ -84,9 +84,15 @@ Only you talk to Ramesh.
 `agentmail/OPERATIONAL_RULES.md` rules 9–15, (3) read the *In flight* list below —
 there is a BLOCKED commit and an undeployed 20-commit set waiting on Ramesh.
 
-**Terminal:** the fleet is in tmux session `circle`, shown in **macOS Terminal.app**
-as side-by-side panes in the `agents` window. Ramesh must be able to SEE every
-seat; a detached session is not "running" (rule 13).
+**Where everything runs** (verified 2026-09-12, `agentmail/bin/whereami`):
+- **Ramesh is in iTerm2.** That is the window he types into.
+- **The fleet is in macOS Terminal.app** — tmux session `circle`, both child seats
+  as side-by-side panes in the `agents` window. He must be able to SEE every seat;
+  a detached session is not "running" (rule 13).
+- **You (this overseer) run in Terminal.app**, launched by
+  `agentmail/bin/overseer-astra.command`.
+- The outgoing Claude overseer was a **background job** in the ClaudeCode daemon,
+  attached to no window — which is why he could not see it.
 
 ### Fleet
 | seat | runtime | model | state |
