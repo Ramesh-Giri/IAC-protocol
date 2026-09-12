@@ -64,6 +64,40 @@ def find_mail_root(start: str) -> str | None:
         d = parent
 
 
+def _resend_boot_if_idle(window: str, prompt: str, wait: int = 12) -> bool:
+    """Submit the boot prompt if the freshly-launched pane is sitting idle.
+
+    An agent CLI handed its instruction as argv does not always execute it; the
+    seat then shows an empty prompt and looks hung to the operator. But some
+    runtimes DO honour argv, and blindly typing the prompt again would submit it
+    twice. So decide from the pane itself: a working agent renders an interrupt
+    hint ("esc to interrupt" / "to interrupt"), an idle one does not.
+    """
+    import time
+    for _ in range(wait):
+        time.sleep(1)
+        try:
+            pane = subprocess.run(["tmux", "capture-pane", "-p", "-t", window],
+                                  capture_output=True, text=True, timeout=10).stdout
+        except Exception:
+            return False
+        if not pane.strip():
+            continue
+        if "to interrupt" in pane:
+            return False          # already working -- argv was honoured
+        if "\u276f" in pane or "\u203a" in pane:   # idle prompt glyph
+            try:
+                subprocess.run(["tmux", "send-keys", "-t", window, "-l", prompt],
+                               check=True, timeout=10)
+                time.sleep(1)
+                subprocess.run(["tmux", "send-keys", "-t", window, "Enter"],
+                               check=True, timeout=10)
+                return True
+            except Exception:
+                return False
+    return False
+
+
 def applescript_quote(s: str) -> str:
     return s.replace("\\", "\\\\").replace('"', '\\"')
 
@@ -145,6 +179,23 @@ def spawn(kind: str, title: str, command: str) -> tuple[bool, str]:
     elif kind == "tmux":
         try:
             subprocess.run(["tmux", "new-window", "-n", title, command], check=True, timeout=15)
+            # The boot prompt is passed as argv to the agent CLI, but it does not
+            # reliably auto-submit -- the seat then sits at an empty prompt and
+            # reads as "stuck" to whoever is watching, when in truth nothing was
+            # ever sent. Happened twice on 2026-09-12.
+            #
+            # Re-send it ONLY if the pane is actually idle. Sending it
+            # unconditionally would double-submit on every seat where argv DID
+            # work; deciding from the pane's own state is the check whose subject
+            # is the thing at risk.
+            # spawn() receives the assembled shell line, not the prompt; the boot
+            # prompt is its final quoted argument (build_command appends it last).
+            try:
+                boot = shlex.split(command)[-1]
+            except Exception:
+                boot = ""
+            if boot:
+                _resend_boot_if_idle(title, boot)
             return True, "tmux window"
         except (OSError, subprocess.SubprocessError) as exc:
             return False, str(exc)
