@@ -60,7 +60,50 @@ def main() -> int:
     if m:
         job = m.group(1)
 
-    tty = ps("tty=", os.getpid()) or "??"
+    # The OPERATOR-facing client and the JOB HOST are different processes, and
+    # confusing them is how "which terminal are you on?" gets answered wrongly.
+    # A genuine terminal window has a `login` session leader on its tty; a
+    # daemon-allocated PTY (a background job) does not. Report BOTH.
+    def _session_tty() -> str:
+        for pid_, _c in chain:
+            t_ = ps("tty=", pid_)
+            if t_ and t_ != "??":
+                return t_
+        return "??"
+
+    def _is_real_window(tty_: str) -> bool:
+        if not tty_ or tty_ == "??":
+            return False
+        try:
+            out = subprocess.run(["ps", "-eo", "tty=,comm="], capture_output=True,
+                                 text=True, timeout=5).stdout
+        except Exception:
+            return False
+        return any(l.split()[0] == tty_ and l.split()[-1].endswith("login")
+                   for l in out.splitlines() if l.split())
+
+    tty = _session_tty()
+    real = _is_real_window(tty)
+    print(f"tty (session): {tty}  ->  {'genuine terminal window' if real else 'daemon PTY / no window'}")
+
+    # DO NOT guess which session is the operator's. Other agent CLIs on real
+    # terminals are usually OTHER sessions (old, or the fleet), and naming one as
+    # "the operator's client" is an unfounded claim dressed as a reading. List
+    # them as what they are: other sessions.
+    try:
+        allp = subprocess.run(["ps", "-eo", "pid=,tty=,comm="], capture_output=True,
+                              text=True, timeout=5).stdout
+        others = [l.strip() for l in allp.splitlines()
+                  if len(l.split()) >= 3 and l.split()[1] != "??"
+                  and l.split()[-1].split("/")[-1] in ("claude", "codex")
+                  and l.split()[1] != tty]
+        if others:
+            print("other agent sessions on real terminals (NOT necessarily this one):")
+            for c in others:
+                print(f"  {c}")
+    except Exception:
+        pass
+
     print(f"host app     : {host}")
     print(f"session kind : {'BACKGROUND job (no terminal attached)' if bg else 'foreground'}")
     if job:
