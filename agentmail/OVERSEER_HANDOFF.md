@@ -74,7 +74,19 @@ consumer, and its cost is dominated by long context (88% of usage was at >150k).
 
 ## 5. Live state — UPDATE THIS
 
-**As of 2026-09-12 ~17:45 (Asia/Katmandu).**
+**As of 2026-09-12 ~18:05 (Asia/Katmandu). THIS IS A LIVE HANDOFF —** Ramesh moved
+the overseer seat to **Codex / gpt-6-astra** to preserve the Claude remainder
+(79% of the week already spent, resets Sep 13 21:45). The outgoing Claude/Opus-5
+session has gone quiet and is no longer acking mail; **you are the overseer now.**
+Only you talk to Ramesh.
+
+**First three things to do:** (1) arm your mail watcher, (2) read
+`agentmail/OPERATIONAL_RULES.md` rules 9–15, (3) read the *In flight* list below —
+there is a BLOCKED commit and an undeployed 20-commit set waiting on Ramesh.
+
+**Terminal:** the fleet is in tmux session `circle`, shown in **macOS Terminal.app**
+as side-by-side panes in the `agents` window. Ramesh must be able to SEE every
+seat; a detached session is not "running" (rule 13).
 
 ### Fleet
 | seat | runtime | model | state |
