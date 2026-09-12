@@ -1,0 +1,21 @@
+#!/usr/bin/env python3
+"""List the Codex models actually available on this account.
+
+The picker in the Codex TUI is authoritative, but it is interactive -- asking the
+operator to open `/model` and screenshot it is not a capability check. The CLI
+caches the same list it renders, so read that instead. 2026-09-12: a web-searched
+model table was wrong on every id, and the supervisor only found out when Ramesh
+sent a screenshot. Enumerate; do not guess, and do not ask him.
+"""
+import json, pathlib, sys
+
+cache = pathlib.Path.home() / ".codex" / "models_cache.json"
+if not cache.exists():
+    sys.exit("no models_cache.json -- run any `codex` command once to populate it")
+d = json.loads(cache.read_text())
+print(f"# fetched {d.get('fetched_at','?')}  (codex {d.get('client_version','?')})\n")
+for m in d.get("models", []):
+    efforts = ",".join(e["effort"] for e in m.get("supported_reasoning_levels", []))
+    print(f"{m['slug']:24} {m.get('display_name',''):20} {m.get('description','')[:52]}")
+    if efforts:
+        print(f"{'':24} effort: {efforts}  (default {m.get('default_reasoning_level','?')})")
