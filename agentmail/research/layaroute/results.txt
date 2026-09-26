@@ -1,0 +1,152 @@
+== feature 70
+== review 38
+== ui 30
+== security_fix 22
+== fix_findings 19
+== integrate 16
+== plan_research 15
+== bugfix 14
+== security_audit 12
+
+N task seats 230 {'sonnet': 182, 'codex': 33, 'opus': 15}
+always-Sonnet acc: 0.791
+
+kind x model-class
+kind                n sonnet   opus  codex
+feature            64     53      7      4
+review             38     13      7     18
+ui                 30     30      0      0
+security_fix       22     22      0      0
+fix_findings       19     13      0      6
+integrate          16     16      0      0
+plan_research      15     13      0      2
+bugfix             14     13      0      1
+security_audit     12      9      1      2
+
+Leave-one-out accuracy of 'majority model-class within group' (a ceiling for a PERFECT classifier + best fixed policy):
+ kind only            0.813
+ project only         0.791
+ kind+project         0.817
+ date only            0.791
+ kind+date            0.843
+ review-vs-not        0.813
+
+model class by date
+  2026-09-14 24 {'sonnet': 10, 'codex': 7, 'opus': 7}
+  2026-09-15 29 {'sonnet': 23, 'codex': 3, 'opus': 3}
+  2026-09-16 34 {'sonnet': 32, 'opus': 2}
+  2026-09-17 46 {'sonnet': 27, 'codex': 19}
+  2026-09-18 15 {'sonnet': 13, 'codex': 2}
+  2026-09-19 1 {'sonnet': 1}
+  2026-09-21 12 {'codex': 1, 'sonnet': 8, 'opus': 3}
+  2026-09-22 16 {'sonnet': 16}
+  2026-09-23 7 {'sonnet': 6, 'codex': 1}
+  2026-09-24 33 {'sonnet': 33}
+  2026-09-25 12 {'sonnet': 12}
+  2026-09-26 1 {'sonnet': 1}
+
+text leakage: descriptions containing 'Codex' -> class
+Counter({'codex': 28, 'sonnet': 6, 'opus': 1})
+Codex-class seats whose text does NOT say codex: ['circle-review-ramesh', 'circle-recovery-ramesh', 'circle-audit-ramesh', 'skyzai-apu-inapp-0921-ramesh', 'skyzai-chat-pagectx-0923-ramesh']
+
+opus seats:
+  circle-aia-ramesh feature 2026-09-14
+  circle-nostr-ramesh feature 2026-09-14
+  circle-hashtags-ramesh feature 2026-09-14
+  circle-sources-ramesh feature 2026-09-14
+  circle-release-review-ramesh review 2026-09-14
+  skyzai-chat-backend-ramesh feature 2026-09-14
+  skyzai-chat-review-ramesh review 2026-09-14
+  skyzai-final-review-ramesh review 2026-09-15
+  skyzai-final-review2-ramesh review 2026-09-15
+  skyzai-notes-review-ramesh review 2026-09-15
+  skyzai-nest-review-ramesh review 2026-09-16
+  skyzai-sec-audit-ramesh security_audit 2026-09-16
+  skyzai-apu-inapp-review-0921-ramesh review 2026-09-21
+  skyzai-apu-context-0921-ramesh feature 2026-09-21
+  skyzai-byok-apu-0921-ramesh feature 2026-09-21
+
+sonnet seats of kind review (same kind as opus reviews): 13
+
+kind       acc=0.813 diff_vs_constant=+2.2pts  95% CI [-2.6, +7.0]
+kind+date  acc=0.843 diff_vs_constant=+5.2pts  95% CI [+0.0, +10.4]
+project    acc=0.791 diff_vs_constant=+0.0pts  95% CI [+0.0, +0.0]
+opus: 15 seats = 6.5%; predicting 'never opus' is right 93.5% of the time
+codex: 33 seats = 14.3%; predicting 'never codex' is right 85.7% of the time
+since 2026-09-22: 69 seats, 1 non-Sonnet
+
+=== kind accuracy vs author labels (zero-shot; majority-class baseline in brackets) ===
+desc|v1_9way|fwd             n=230 acc=0.548  [majority 'feature' 0.278]
+desc|v1_9way|rev             n=230 acc=0.496  [majority 'feature' 0.278]
+desc|v2_4way|fwd             n=230 acc=0.770  [majority 'build' 0.622]
+desc|v2_4way|rev             n=230 acc=0.752  [majority 'build' 0.622]
+desc+brief|v1_9way|fwd       n=131 acc=0.618  [majority 'review' 0.237]
+desc+brief|v1_9way|rev       n=131 acc=0.588  [majority 'review' 0.237]
+desc+brief|v2_4way|fwd       n=131 acc=0.740  [majority 'build' 0.489]
+desc+brief|v2_4way|rev       n=131 acc=0.748  [majority 'build' 0.489]
+
+--- per-kind recall/precision, desc|v1_9way|fwd ---
+  feature         n= 64 recall=0.41 predicted= 38 precision=0.68
+  review          n= 38 recall=0.97 predicted= 59 precision=0.63
+  ui              n= 30 recall=0.60 predicted= 30 precision=0.60
+  security_fix    n= 22 recall=0.59 predicted= 23 precision=0.57
+  fix_findings    n= 19 recall=0.11 predicted=  4 precision=0.50
+  integrate       n= 16 recall=0.81 predicted= 30 precision=0.43
+  plan_research   n= 15 recall=0.20 predicted=  4 precision=0.75
+  bugfix          n= 14 recall=0.57 predicted= 34 precision=0.24
+  security_audit  n= 12 recall=0.50 predicted=  8 precision=0.75
+  confusion (rows=truth, cols=pred):
+    bugfix  featur  fix_fi  integr  plan_r  review  securi  securi      ui
+  bugfix      8       1       0       1       0       0       0       0       4
+  featur      4      26       0      12       1       9       1       4       7
+  fix_fi     13       0       2       0       0       2       0       2       0
+  integr      0       2       0      13       0       0       0       1       0
+  plan_r      2       4       1       0       3       3       1       0       1
+  review      1       0       0       0       0      37       0       0       0
+  securi      0       0       0       0       0       5       6       1       0
+  securi      4       1       1       1       0       2       0      13       0
+  ui          2       4       0       3       0       1       0       2      18
+
+--- per-kind recall/precision, desc|v2_4way|fwd ---
+  build           n=143 recall=0.80 predicted=132 precision=0.86
+  review          n= 38 recall=1.00 predicted= 55 precision=0.69
+  security        n= 34 recall=0.56 predicted= 30 precision=0.63
+  plan_research   n= 15 recall=0.40 predicted= 13 precision=0.46
+  confusion (rows=truth, cols=pred):
+     build  plan_r  review  securi
+  build     114       7      12      10
+  plan_r      7       6       1       1
+  review      0       0      38       0
+  securi     11       0       4      19
+
+=== END TO END: does policy(Laya kind) predict the model that was actually chosen? ===
+desc|v1_9way|fwd             n=230 always-Sonnet=0.791  perfect-classifier=0.813  Laya=0.791  (Laya - constant = +0.0 pts)
+desc|v1_9way|rev             n=230 always-Sonnet=0.791  perfect-classifier=0.813  Laya=0.713  (Laya - constant = -7.8 pts)
+desc|v2_4way|fwd             n=230 always-Sonnet=0.791  perfect-classifier=0.813  Laya=0.791  (Laya - constant = +0.0 pts)
+desc|v2_4way|rev             n=230 always-Sonnet=0.791  perfect-classifier=0.813  Laya=0.791  (Laya - constant = +0.0 pts)
+desc+brief|v1_9way|fwd       n=131 always-Sonnet=0.748  perfect-classifier=0.649  Laya=0.740  (Laya - constant = -0.8 pts)
+desc+brief|v1_9way|rev       n=131 always-Sonnet=0.748  perfect-classifier=0.649  Laya=0.763  (Laya - constant = +1.5 pts)
+desc+brief|v2_4way|fwd       n=131 always-Sonnet=0.748  perfect-classifier=0.649  Laya=0.748  (Laya - constant = +0.0 pts)
+desc+brief|v2_4way|rev       n=131 always-Sonnet=0.748  perfect-classifier=0.649  Laya=0.748  (Laya - constant = +0.0 pts)
+desc|v1_9way|fwd
+  floor 0.0: coverage 1.00 accuracy-on-covered 0.548
+  floor 0.5: coverage 0.64 accuracy-on-covered 0.676
+  floor 0.6: coverage 0.54 accuracy-on-covered 0.680
+  floor 0.7: coverage 0.42 accuracy-on-covered 0.740
+  floor 0.8: coverage 0.31 accuracy-on-covered 0.817
+  floor 0.9: coverage 0.20 accuracy-on-covered 0.911
+desc|v2_4way|fwd
+  floor 0.0: coverage 1.00 accuracy-on-covered 0.770
+  floor 0.5: coverage 0.55 accuracy-on-covered 0.881
+  floor 0.6: coverage 0.38 accuracy-on-covered 0.874
+  floor 0.7: coverage 0.20 accuracy-on-covered 0.957
+  floor 0.8: coverage 0.11 accuracy-on-covered 0.962
+  floor 0.9: coverage 0.06 accuracy-on-covered 1.000
+  seats truly security-flavored with P(security) >= 0.5: 11/34
+  seats truly security-flavored with P(security) >= 0.3: 22/34
+  seats truly security-flavored with P(security) >= 0.2: 33/34
+  seats truly security-flavored with P(security) >= 0.1: 34/34
+  NON-security seats wrongly locked at P(security) >= 0.5: 0/196
+  NON-security seats wrongly locked at P(security) >= 0.3: 20/196
+  NON-security seats wrongly locked at P(security) >= 0.2: 65/196
+  NON-security seats wrongly locked at P(security) >= 0.1: 159/196
