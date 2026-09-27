@@ -18,6 +18,15 @@
 # kind=review specifically, via model_guard.ALLOW_OPUS_FOR_SECURITY_REVIEW -- keep them in
 # their own section so that one-line change stays scoped to bare security mentions, never to
 # an actual audit/pentest/exploit phrase.
+#
+# EVIDENCE for keeping "rules" in FLAVOUR (checked, not ruled from instinct -- overseer-ramesh,
+# 2026-09-27): of the 17 roster seats whose description mentions "rules", 11 are security or
+# access-control work -- Firestore rules, storage rules, auth, KYB private documents. In this
+# codebase "rules" means `firestore.rules` far more often than business logic, so the broad
+# match is matching the dominant meaning, not over-matching. The next person who thinks "rules
+# is too broad" should recheck that count against the current roster before narrowing it, not
+# argue from a feeling -- same reasoning as test_bias_towards_over_locking_is_intentional_do_not_narrow
+# in test_model_guard.py.
 
 [ALWAYS]
 security audit

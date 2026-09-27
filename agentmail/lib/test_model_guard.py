@@ -33,8 +33,12 @@ ALL_MODELS = sorted(mg.OPUS_TIER | mg.FABLE_TIER | {
     "gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.5",
 })
 VERIFIED = {
-    "claude-code": {"claude-sonnet-5", "claude-haiku-4-5-20251001", "claude-opus-5-5",
-                    "claude-opus-5", "claude-fable-5-1", "claude-fable-5"},
+    # Every ALL_MODELS id is verified here on purpose: this fixture stands in for "today's
+    # catalogue says every candidate is real", so a test that isn't specifically about the
+    # allowlist stage doesn't incidentally trip it. test_allowlist_drops_unverified_ids_* and
+    # test_missing_catalogue_for_a_runtime_* cover the allowlist stage directly, with their
+    # own deliberately-partial catalogues.
+    "claude-code": {"claude-sonnet-5", "claude-haiku-4-5-20251001"} | mg.OPUS_TIER | mg.FABLE_TIER,
     "codex-cli": {"gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-terra", "gpt-5.6-sol",
                   "gpt-5.6-luna", "gpt-5.5"},
 }
@@ -318,6 +322,53 @@ class ExhaustiveGuardTests(unittest.TestCase):
             self.assertEqual(row2["task_id"], "t2")
             self.assertFalse(row2["locked_audit"])
             self.assertTrue(all(m not in mg.LOCKED_TIER for s in row1["survivors"] for m in [s["model"]]))
+
+    def test_log_schema_has_every_field_the_overseer_specified(self):
+        """'seat, brief hash, candidates in, locks fired, final choice, decided_by' -- the
+        exact list from the overseer's 2026-09-27 mail. One line per launch, even when
+        nothing is removed and even when it falls back, so a baseline can be measured."""
+        import json
+        import tempfile
+        cands = _all_candidates()
+        d = mg.resolve(cands, task_kind="feature", task_text=BENIGN_TEXT, verified_ids=VERIFIED)
+        with tempfile.TemporaryDirectory() as td:
+            path = f"{td}/decisions.jsonl"
+            mg.write_decision_log(path, d, task_id="demo-1", seat="demo-1",
+                                    task_kind="feature", pinned=False,
+                                    final_choice={"runtime": "claude-code", "model": "claude-sonnet-5"})
+            with open(path) as f:
+                row = json.loads(f.readline())
+        for key in ("seat", "brief_hash", "candidates_in", "locks_fired", "final_choice", "decided_by"):
+            self.assertIn(key, row, f"log line is missing required field {key!r}")
+        self.assertEqual(row["seat"], "demo-1")
+        self.assertEqual(len(row["brief_hash"]), 64)  # sha256 hex digest
+        self.assertEqual(row["candidates_in"], [{"runtime": c.runtime, "model": c.model} for c in cands])
+        self.assertEqual(row["final_choice"], {"runtime": "claude-code", "model": "claude-sonnet-5"})
+        self.assertEqual(row["decided_by"], "guard")
+
+    def test_brief_hash_never_leaks_the_text_itself(self):
+        import json
+        d = mg.resolve(_all_candidates(), task_kind="security_audit", task_text=SEC_AUDIT_TEXT, verified_ids=VERIFIED)
+        row = d.to_log_dict(task_id="x")
+        blob = json.dumps(row)
+        self.assertNotIn(SEC_AUDIT_TEXT, blob)
+        self.assertNotIn("Cloudflare", blob)  # a distinctive word from the raw brief
+
+    def test_locks_fired_is_structured_not_prose(self):
+        # host_tool_required would ALSO remove the invalid codex-cli id (wrong runtime for a
+        # host-tool task), masking whether the allowlist stage independently fires -- so each
+        # stage is checked in isolation here, not stacked in one call.
+        cands_with_bad_id = _all_candidates() + [mg.Candidate(runtime="codex-cli", model="gpt-5.3-codex-spark")]
+        d_security_and_allowlist = mg.resolve(cands_with_bad_id, task_kind="security_audit",
+                                               task_text=SEC_AUDIT_TEXT, verified_ids=VERIFIED)
+        self.assertEqual(set(d_security_and_allowlist.locks_fired), {"security_lock", "allowlist"})
+
+        d_host_tool = mg.resolve(_all_candidates(), task_kind="feature", task_text=BENIGN_TEXT,
+                                  host_tool_required=True, verified_ids=VERIFIED)
+        self.assertEqual(d_host_tool.locks_fired, ["host_tool"])
+
+        d_benign = mg.resolve(_all_candidates(), task_kind="feature", task_text=BENIGN_TEXT, verified_ids=VERIFIED)
+        self.assertEqual(d_benign.locks_fired, [])  # nothing removed -- must stay empty, not omitted
 
     def test_patterns_file_missing_fails_loud_not_silent(self):
         """The one piece of I/O this module does: if the pattern file vanished, refuse to
