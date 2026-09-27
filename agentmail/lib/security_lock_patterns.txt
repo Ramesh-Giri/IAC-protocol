@@ -1,0 +1,54 @@
+# Security-lock patterns for agentmail/lib/model_guard.py -- edit THIS FILE to add or
+# remove a trigger phrase. No code path needs to change; model_guard.py re-reads this file
+# at import time. Case-insensitive substring match, one phrase per line, '#' starts a comment.
+#
+# Ruling, Ramesh via overseer-ramesh, 2026-09-27 (modelpick-0927-x2q5): "Any security-flavoured
+# task locks Opus and Fable out, whatever the kind classifier says and whatever the seat
+# description calls it: audit, review, pen test, hardening, rules, secfix." A false lock
+# costs nothing (the lock target is Sonnet, already ~78% of the fleet and the default
+# anyway); a missed lock costs a blocked seat and a wasted launch (the safeguard dialog blocked
+# seats on 2026-09-15 and 2026-09-16). BIAS TOWARDS OVER-LOCKING ON PURPOSE. If a phrase here
+# looks like it over-matches something unrelated, that is the intended trade-off, not a bug to
+# quietly narrow -- see test_model_guard.py's tests for this file, which assert the bias
+# direction, not just today's exact wording.
+#
+# Two sections. ALWAYS matches lock unconditionally -- no flag in model_guard.py may ever
+# exempt them, regardless of kind. FLAVOUR matches lock by default too (the guard's default is
+# CLOSED as of this ruling), but are the ones a future ruling could choose to exempt for
+# kind=review specifically, via model_guard.ALLOW_OPUS_FOR_SECURITY_REVIEW -- keep them in
+# their own section so that one-line change stays scoped to bare security mentions, never to
+# an actual audit/pentest/exploit phrase.
+
+[ALWAYS]
+security audit
+security-audit
+security test
+pen test
+pentest
+penetration test
+penetration testing
+exploit
+vulnerability hunt
+supply-chain audit
+supply chain audit
+red team
+red-team
+deep security test
+pre-go-live security
+defensive security
+
+[FLAVOUR]
+security
+secfix
+sec-fix
+sec fix
+hardening
+defence in depth
+defense in depth
+rules
+vuln
+private key
+secret
+self-grant
+rate limit
+firestore
