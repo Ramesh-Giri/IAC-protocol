@@ -58,8 +58,10 @@ for s in SCENARIOS:
     d = mg.resolve(ALL_CANDIDATES, task_kind=s.get("task_kind"), task_text=s.get("task_text", ""),
                     host_tool_required=s.get("host_tool_required", False),
                     verified_ids=VERIFIED, pinned=s.get("pinned", False))
-    line = mg.write_decision_log(str(log_path), d, task_id=s["task_id"], task_kind=s.get("task_kind"),
-                                  pinned=s.get("pinned", False))
+    final_choice = None if not d.candidates else {"runtime": d.candidates[0].runtime, "model": d.candidates[0].model}
+    line = mg.write_decision_log(str(log_path), d, task_id=s["task_id"], seat=s["task_id"],
+                                  task_kind=s.get("task_kind"), pinned=s.get("pinned", False),
+                                  final_choice=final_choice)
     survivors = ", ".join(f"{c.runtime}:{c.model}" for c in d.candidates) or "(none)"
     print(f"{s['task_id']:24} locked={d.locked_audit!s:5} survivors=[{survivors}]")
     for r in d.reasons:

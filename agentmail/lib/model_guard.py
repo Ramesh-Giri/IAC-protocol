@@ -17,9 +17,14 @@ Scope, deliberately narrow (per overseer GO on phase 2, 2026-09-27):
     Headroom can never re-admit a model the hard-constraint filter removed.") and it needs
     a `fleet-usage` snapshot format that does not exist yet. This guard produces the
     ALREADY-PERMITTED list that stage would consume.
-  - Nothing here is wired into `agentmail-launch`. That is a separate, later step needing
-    its own explicit GO, same boundary the original design task set ("do not modify
-    agentmail-launch ... touch no live fleet tooling") and nothing since has lifted it.
+  - Wiring into `agentmail-launch`: authorized by Ramesh via overseer-ramesh, 2026-09-27,
+    modelpick-0927-x2q5 ("Ramesh says do it"), reversing the original "touch no live fleet
+    tooling" boundary for this one integration. The non-negotiable from that authorization:
+    **a launch must never fail because of the guard** -- a missing catalogue, a malformed
+    pattern file, an exception inside resolve(), or the guard removing every candidate all
+    degrade to the roster's own `model` value, and the launch proceeds. The guard is
+    ADVISORY at the launcher integration point: it reports and logs, it never substitutes a
+    different model and never blocks a launch. See agentmail-launch's own guard wrapper.
 
 RULING (Ramesh via overseer-ramesh, 2026-09-27, modelpick-0927-x2q5, superseding this
 module's first draft): security REVIEWS lock out Opus/Fable the same as audits. The lock is
@@ -39,6 +44,7 @@ any kind, ever -- see test_model_guard.py for the guarantee.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import time
@@ -118,18 +124,33 @@ class Candidate:
 @dataclass
 class Decision:
     candidates: list[Candidate]           # survivors, in the order they were given
+    candidates_in: list[Candidate]        # the input list, before any filter ran
     reasons: list[str]                    # every filter that fired, in order, even if it removed nothing
     locked_audit: bool                    # True if the security lock was active for this task
+    locks_fired: list[str]                # machine-readable: which stages actually removed >=1 candidate
+    brief_hash: str                       # sha256(task_text) -- the log gets this, never the text itself
     decided_by: str = "guard"
 
-    def to_log_dict(self, task_id: str, task_kind: Optional[str], pinned: bool) -> dict:
+    def to_log_dict(self, *, task_id: str, seat: Optional[str] = None, task_kind: Optional[str] = None,
+                     pinned: bool = False, final_choice: Optional[dict] = None) -> dict:
+        """`final_choice` is what the CALLER actually launched with (always the roster's own
+        value at this integration point -- the guard is advisory here, see module docstring),
+        as {"runtime": ..., "model": ...} or None if this decision was never tied to a launch
+        (e.g. a demo run). It is a separate concept from `survivors`: the guard's opinion and
+        the value actually used are logged side by side on purpose, so a later reader can see
+        every case where they disagreed, not just today's (empty) diff."""
         return {
             "ts": time.time(),
             "task_id": task_id,
+            "seat": seat if seat is not None else task_id,
             "kind": task_kind,
             "pinned": pinned,
+            "brief_hash": self.brief_hash,
+            "candidates_in": [{"runtime": c.runtime, "model": c.model} for c in self.candidates_in],
             "locked_audit": self.locked_audit,
+            "locks_fired": self.locks_fired,
             "survivors": [{"runtime": c.runtime, "model": c.model} for c in self.candidates],
+            "final_choice": final_choice,
             "reasons": self.reasons,
             "decided_by": self.decided_by,
         }
@@ -175,16 +196,22 @@ def resolve(
     (that lives in roster.json, which this module never reads).
     """
     reasons: list[str] = []
+    locks_fired: list[str] = []
+    candidates_in = list(candidates)
     survivors = list(candidates)
+    brief_hash = hashlib.sha256((task_text or "").encode("utf-8")).hexdigest()
 
     if pinned:
         reasons.append("pinned seat -- guard should not have been called; returning candidates unfiltered")
-        return Decision(candidates=survivors, reasons=reasons, locked_audit=False)
+        return Decision(candidates=survivors, candidates_in=candidates_in, reasons=reasons,
+                         locked_audit=False, locks_fired=locks_fired, brief_hash=brief_hash)
 
     locked = _security_locked(task_kind, task_text, laya_p_security)
     if locked:
         before = len(survivors)
         survivors = [c for c in survivors if c.model not in LOCKED_TIER]
+        if before != len(survivors):
+            locks_fired.append("security_lock")
         reasons.append(
             f"security lock active (kind={task_kind!r}, text/Laya matched a lock pattern): "
             f"removed {before - len(survivors)} Opus/Fable candidate(s)"
@@ -195,6 +222,8 @@ def resolve(
     if host_tool_required:
         before = len(survivors)
         survivors = [c for c in survivors if c.runtime == "claude-code"]
+        if before != len(survivors):
+            locks_fired.append("host_tool")
         reasons.append(f"host-tool task: removed {before - len(survivors)} non-claude-code candidate(s)")
 
     if verified_ids is not None:
@@ -211,19 +240,25 @@ def resolve(
                 continue
             kept.append(c)
         survivors = kept
-        if before == len(survivors):
+        if before != len(survivors):
+            locks_fired.append("allowlist")
+        else:
             reasons.append("allowlist check: all survivors verified in today's catalogue")
 
-    return Decision(candidates=survivors, reasons=reasons, locked_audit=locked)
+    return Decision(candidates=survivors, candidates_in=candidates_in, reasons=reasons,
+                     locked_audit=locked, locks_fired=locks_fired, brief_hash=brief_hash)
 
 
-def write_decision_log(log_path: str, decision: Decision, *, task_id: str, task_kind: Optional[str], pinned: bool = False) -> str:
+def write_decision_log(log_path: str, decision: Decision, *, task_id: str, seat: Optional[str] = None,
+                        task_kind: Optional[str] = None, pinned: bool = False,
+                        final_choice: Optional[dict] = None) -> str:
     """Append one JSONL line. Append-only, never rewrites a prior line.
 
     Returns the line written (also useful for a caller that wants to print it, e.g. a demo
     or a future CLI, without re-reading the file).
     """
-    line = json.dumps(decision.to_log_dict(task_id, task_kind, pinned), sort_keys=True)
+    line = json.dumps(decision.to_log_dict(task_id=task_id, seat=seat, task_kind=task_kind,
+                                            pinned=pinned, final_choice=final_choice), sort_keys=True)
     with open(log_path, "a") as f:
         f.write(line + "\n")
     return line
