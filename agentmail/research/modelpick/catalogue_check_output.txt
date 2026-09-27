@@ -1,0 +1,9 @@
+codex cache: 9 model ids, fetched_at=2026-09-27T05:51:05.673465Z, age=1778s
+claude cache: 10 model ids, fetchedAt=1790488111712, stale=False, file=5c8458cb-682b-44b6-84a6-1c4f98e59b09-fb07a864b295-cc.json
+
+roster seats whose pinned model is NOT in today's local catalogue: 2
+  research-token-efficiency-ramesh  runtime=codex-cli  model=gpt-5.3-codex-spark
+  skyzai-tasks-plan-codex-ramesh  runtime=codex-cli  model=gpt-5.3-codex-spark
+
+These are exactly the seats a discovery-only, no-web-search, no-invented-id catalogue check
+would flag TODAY, with zero Laya involvement and zero model calls.
