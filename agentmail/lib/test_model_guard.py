@@ -6,6 +6,12 @@ Also encodes the 2026-09-27 ruling (security reviews lock out Opus too, default 
 patterns biased towards over-locking on purpose) so nobody later "fixes" the over-matching
 as a bug without reading why it's here.
 
+The pattern list in security_lock_patterns.txt was written from the RULING's own wording
+("audit, review, pen test, hardening, rules, secfix ..."), not derived from what the roster
+currently holds -- the roster is the output the policy produces, not evidence for it. This
+file uses real roster text only as a TEST CORPUS afterwards, to check the rule fires where it
+should and stays silent where it shouldn't (overseer STOP mail, 2026-09-27, modelpick-0927-x2q5).
+
 No network, no Laya, no file I/O except this file and security_lock_patterns.txt. Run:
   python3 -m unittest agentmail/lib/test_model_guard.py -v
 from the repo root, or `python3 agentmail/lib/test_model_guard.py` directly.
@@ -43,6 +49,42 @@ SEC_AUDIT_TEXT = "Full Cloudflare security-audit skill run, backend + rules, rep
 
 # A task with NO security flavour at all, for the "unrelated kinds must not lock" tests.
 BENIGN_TEXT = "add a button and fix the spacing"
+
+# Real production roster text used as a NEGATIVE test corpus -- per the overseer's STOP mail
+# (2026-09-27, modelpick-0927-x2q5): "Calibrate against the RULE ... use the roster only as a
+# test corpus to check the regex FIRES where it should", and specifically "test descriptions
+# that must NOT lock ... a review with no security flavour, a KYB or payments seat, a UI task."
+# These are read from the live roster as fixed strings, not used to DERIVE the pattern list --
+# the pattern list came from the ruling's own wording (see security_lock_patterns.txt's
+# header) before any of these were checked against it.
+REAL_REVIEW_NO_SECURITY_FLAVOUR_TEXT = (
+    "Read-only pre-deploy review of notes tree + chatTurn fixes 05e8a1bd..2d7b87fb."
+)  # skyzai-notes-review-ramesh, still claude-opus-5 in the roster today -- proves ordinary
+   # reviews are not swept up by the security ruling, only security-flavoured ones are.
+REAL_PAYMENTS_TEXT = (
+    "Circle backend + platform (payments blast radius — strong tier)"
+)  # circle-ramesh -- a genuinely high-stakes, blast-radius-flagged seat with zero overlap
+   # with any lock pattern; proves "blast radius" and "security" are not the same axis.
+REAL_UI_TEXT = (
+    "Circle MD3 parallel worker — draft-for-review in an isolated treehouse worktree; "
+    "escalates by mail, never prompts the human"
+)  # circle-sectors-ramesh -- a plain UI/MD3 task.
+
+# Real production text that DOES lock, and a documented reason it is not a false positive
+# even though it comes from a currently-Sonnet (not currently Opus-locked-out) seat: it is
+# the deliberate over-locking bias, not a bug -- see the test using it, below.
+REAL_KYB_TEXT = (
+    "KYB private documents: backend, rules, migration (+ RAG block fix)."
+)  # skyzai-kyb-backend-ramesh -- trips the FLAVOUR tier's bare "rules". Two independent
+   # reasons this is intended, not a hole in the pattern: (1) Ramesh's ruling named "rules"
+   # explicitly as a lock word, so removing it because ONE example over-matches would be
+   # overriding an explicit instruction on a guess; (2) read plainly, "backend, rules,
+   # migration" for a PRIVATE DOCUMENTS feature plausibly means the Firestore/access-control
+   # rules protecting those documents, which is exactly the kind of change worth a
+   # conservative lock. It is invisible today because the seat is already claude-sonnet-5,
+   # so this changes no live behaviour -- it only matters if a future task ever proposed
+   # Opus for KYB backend work. Flagged to the overseer as a live tension rather than
+   # resolved silently either way (modelpick-0927-x2q5 mail thread).
 
 
 def _all_candidates():
@@ -140,10 +182,14 @@ class ExhaustiveGuardTests(unittest.TestCase):
             self.assertFalse(d.locked_audit, f"kind={kind} locked with no trigger present")
             self.assertTrue({c.model for c in d.candidates} & mg.LOCKED_TIER)
 
-    def test_review_and_audit_both_lock_matching_live_roster(self):
-        """The overseer's original open question, resolved by ruling: use the exact
-        production text of the two seats that motivated it. Both now lock, matching that
-        skyzai-final-review-ramesh and skyzai-sec-audit-ramesh are BOTH off Opus today."""
+    def test_review_and_audit_both_lock_per_the_ruling(self):
+        """The RULE says any security-flavoured task locks, review included. This checks the
+        pattern list FIRES on the two real briefs that raised the original question -- it is
+        not where the rule came from (the pattern list was written from the ruling's own
+        wording in security_lock_patterns.txt, before this test existed), it is confirmation
+        that the rule, tested against real text, does what the ruling says. Per the overseer's
+        2026-09-27 STOP mail: the roster is the output the rule produces, not the evidence for
+        it -- do not read this test the other way around."""
         cands = _all_candidates()
         self.assertFalse(mg.ALLOW_OPUS_FOR_SECURITY_REVIEW,
                           "this test documents the RULING's default (closed); if you flipped "
@@ -151,10 +197,42 @@ class ExhaustiveGuardTests(unittest.TestCase):
                           "in the phase 2 mail")
         d_review = mg.resolve(cands, task_kind="review", task_text=FINAL_REVIEW_TEXT, verified_ids=VERIFIED)
         d_audit = mg.resolve(cands, task_kind="security_audit", task_text=SEC_AUDIT_TEXT, verified_ids=VERIFIED)
-        self.assertTrue(d_review.locked_audit, "the live final-review seat's own text does not lock -- but it is on Sonnet today, it must lock")
+        self.assertTrue(d_review.locked_audit, "a security-flavoured review brief did not lock -- the ruling requires it to")
         self.assertTrue(d_audit.locked_audit)
         self.assertTrue({c.model for c in d_review.candidates}.isdisjoint(mg.LOCKED_TIER))
         self.assertTrue({c.model for c in d_audit.candidates}.isdisjoint(mg.LOCKED_TIER))
+
+    def test_non_security_briefs_do_not_lock(self):
+        """The negative side the overseer's STOP mail specifically asked for, or the pattern
+        is useless: a review with no security flavour, a payments seat, and a UI task, all
+        real production text, none of it used to build the pattern list (which came from the
+        ruling's wording). If any of these locks, the pattern over-matches badly enough to be
+        worthless -- these are exactly the honest failure cases that would show it."""
+        cands = _all_candidates()
+        for label, text, kind in (
+            ("plain review", REAL_REVIEW_NO_SECURITY_FLAVOUR_TEXT, "review"),
+            ("payments/blast-radius seat", REAL_PAYMENTS_TEXT, "feature"),
+            ("UI seat", REAL_UI_TEXT, "ui"),
+        ):
+            d = mg.resolve(cands, task_kind=kind, task_text=text, verified_ids=VERIFIED)
+            self.assertFalse(d.locked_audit, f"{label} ({text!r}) locked -- pattern is over-broad")
+            self.assertTrue({c.model for c in d.candidates} & mg.OPUS_TIER,
+                             f"{label} lost Opus as a candidate despite not being security-flavoured")
+
+    def test_real_kyb_brief_locks_on_the_word_rules_documented_tension(self):
+        """A real, currently-benign-looking brief (skyzai-kyb-backend-ramesh, today
+        claude-sonnet-5, so this changes no live behaviour) trips the FLAVOUR tier's bare
+        'rules'. This is flagged, not silently resolved: Ramesh's ruling named 'rules'
+        explicitly as a lock word, and read plainly this brief's 'rules' plausibly means the
+        access-control rules for a PRIVATE DOCUMENTS feature -- a defensible over-lock, not
+        an obvious bug. Kept locking on purpose; see the mail thread (modelpick-0927-x2q5) for
+        the reasoning and the standing invitation to narrow 'rules' if Ramesh says otherwise."""
+        cands = _all_candidates()
+        d = mg.resolve(cands, task_kind="feature", task_text=REAL_KYB_TEXT, verified_ids=VERIFIED)
+        self.assertTrue(d.locked_audit,
+                         "the KYB brief no longer locks on 'rules' -- if this was a deliberate "
+                         "narrowing of security_lock_patterns.txt, update this test's docstring "
+                         "and confirm it was an explicit ruling, not a guess")
 
     def test_one_line_toggle_is_the_only_thing_that_would_reopen_review(self):
         """Flip the flag (the one-line change the overseer asked to keep available for a
