@@ -52,6 +52,7 @@ seat confident, wrong facts.
 | Mail spool (the real audit trail) | `.agent-mail/<seat>/{new,cur}/` |
 | Remaining budget on both providers | `agentmail/bin/fleet-usage` |
 | Codex models actually available | `agentmail/bin/codex-models` |
+| Roster model ids vs. today's local catalogue (Codex + Claude) | `agentmail/bin/catalog-check -d .agent-mail` |
 | Start/attach the visible fleet | `agentmail/bin/fleet-start.command` |
 | Claude-only nuance (not portable) | `~/.claude/projects/-Users-darkness-Work-Aureus/memory/` |
 

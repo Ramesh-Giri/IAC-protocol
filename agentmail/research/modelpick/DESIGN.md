@@ -108,12 +108,16 @@ Checked, not assumed: I cross-referenced today's roster (241 seats) against both
 live roster seats are pinned to `gpt-5.3-codex-spark`, a model id absent from today's
 `models_cache.json`** (`research-token-efficiency-ramesh`, `skyzai-tasks-plan-codex-ramesh`). That id
 was verified-working on 2026-09-12 per `model-lineup-and-task-sizing` memory; nine days later it is
-gone from the account's own list. This is the decay the brief warned about, caught with zero web
-search and zero Laya calls, using exactly the mechanism this design proposes: **match the roster's
-model field against the local cache; anything absent is a finding, not a launch.** I am not fixing
-these two seats - that is fleet tooling and out of scope for a design task - but I am reporting it,
-per the task's own "review, don't fix, mail it instead" rule; see the mail I'm sending with this
-design.
+gone from the account's own list, and two roster entries still point at it today. **Nobody would
+have noticed until a launch failed** - the roster carries no mechanism that would have caught this on
+its own, and it sat live for nine days. This is the decay the brief warned about, caught with zero
+web search and zero Laya calls, using exactly the mechanism this design proposes: **match the
+roster's model field against the local cache, on every launch, not once; anything absent is a
+finding, not a launch.** I am not fixing these two seats - that is fleet tooling and out of scope for
+a design task - but I am reporting it, per the task's own "review, don't fix, mail it instead" rule;
+see the mail I'm sending with this design. This is the strongest argument in this whole document for
+building phase 1 (catalogue verification) before anything else: it is the cheapest possible piece,
+and it just caught a real, live, silent failure mode that nothing else in the fleet would have.
 
 The general rule this generalizes to: **the matcher's LAST step before returning a candidate is "is
 this id a key in today's cache for this runtime?" - if not, drop it, no matter how good the `claimed`
@@ -174,6 +178,14 @@ The prior seat measured Laya as a 4-way/9-way KIND classifier. This task asks sp
 Laya more directly for the two signals a matcher actually needs - "is this security work" and "is
 this read-only" - does better than routing through a kind label first. It should, if anything: a
 direct binary question has less to get wrong than a 4-or-9-way pick.
+
+> **Read this before anyone proposes a Laya probability threshold again.** The readonly signal's
+> recall swings from 0.600 to 0.877 - 28 points - purely from listing "yes" before "no" instead of
+> after, nothing else changed. That rules out Laya as a gate on its own, independent of whatever the
+> recall number happens to be on any given day: a threshold calibrated against today's wording is not
+> a threshold against tomorrow's, and the wording WILL change every time the model lineup does. This
+> is a stronger objection than "the recall is too low" - low recall can look like it might improve
+> with a better prompt; an instability driven by string order cannot be prompted away.
 
 **Method.** Two `choice` questions, each yes/no, wording fixed before running (no tuning - the same
 discipline the prior seat used, and the same discipline the LAYA_TODO_DETECTOR_STATE incident argues
@@ -337,10 +349,18 @@ risk, already-proven-useful first step:
 ## Files
 
 `eval_signals.py` (the two-signal experiment), `signals_results.json` (raw per-seat probabilities),
-`catalogue_check.py` (read-only roster-vs-cache cross-reference), `catalogue_check_output.txt` (its
-output as run 2026-09-27T05:51Z), `dataset.json` (copied from the prior seat's `layaroute` branch,
-commit `a8a9ba9`, unchanged - same 230-seat, hand-reviewed dataset, so the two studies are directly
+`catalogue_check.py` (the throwaway research prototype of the roster-vs-cache cross-reference,
+kept as the record of what was measured for this design), `catalogue_check_output.txt` (its output
+as run 2026-09-27T05:51Z), `dataset.json` (copied from the prior seat's `layaroute` branch, commit
+`a8a9ba9`, unchanged - same 230-seat, hand-reviewed dataset, so the two studies are directly
 comparable).
 Re-run: `pip install laya==0.3.20` in a throwaway venv (`HF_HUB_OFFLINE=1`), then
 `python3 eval_signals.py`; `python3 catalogue_check.py` needs no install, reads only local cache
 files and `roster.json`.
+
+**Phase 1, post-GO**: the prototype above was promoted into a real tool at
+`agentmail/bin/catalog-check` (matches the `codex-models` style: no-args-first, `--help`, `-d
+MAIL_ROOT` like every other `agentmail/bin` script). It is read-only - reports mismatches, edits
+nothing - and returns a non-zero exit on any mismatch or unreadable catalogue, so it can be folded
+into `rollcall` or a periodic check. Run it: `agentmail/bin/catalog-check -d
+/Users/darkness/Work/Aureus/.agent-mail`.
