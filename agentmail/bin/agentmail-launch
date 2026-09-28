@@ -328,7 +328,7 @@ def build_command(seat: dict, mail_root: str) -> str:
     return f"cd {shlex.quote(seat['home'])} && {launch}"
 
 
-def spawn(kind: str, title: str, command: str) -> tuple[bool, str]:
+def spawn(kind: str, title: str, command: str, session: str | None = None) -> tuple[bool, str]:
     if kind == "terminal":
         script = (f'tell application "Terminal"\n'
                   f'  activate\n'
@@ -345,7 +345,25 @@ def spawn(kind: str, title: str, command: str) -> tuple[bool, str]:
                   f'end tell')
     elif kind == "tmux":
         try:
-            subprocess.run(["tmux", "new-window", "-n", title, command], check=True, timeout=15)
+            # Fleet tmux sessions are named PER PROJECT (`circle`, `skyzai`), so a
+            # seat must land in ITS project's session. `tmux new-window` with no
+            # -t uses whatever session is CURRENT -- i.e. whichever one a human
+            # happens to be attached to -- so two skyzai seats opened inside the
+            # `circle` session on 2026-09-28 and had to be moved by hand. Target
+            # the session explicitly, creating it detached if it does not exist.
+            target = title
+            if session:
+                if subprocess.run(["tmux", "has-session", "-t", session],
+                                  capture_output=True, timeout=10).returncode != 0:
+                    subprocess.run(["tmux", "new-session", "-d", "-s", session],
+                                   check=True, timeout=15)
+                subprocess.run(["tmux", "new-window", "-t", session, "-n", title, command],
+                               check=True, timeout=15)
+                # Session-qualified, so capture-pane/send-keys cannot hit a
+                # same-named window in another session.
+                target = f"{session}:{title}"
+            else:
+                subprocess.run(["tmux", "new-window", "-n", title, command], check=True, timeout=15)
             # The boot prompt is passed as argv to the agent CLI, but it does not
             # reliably auto-submit -- the seat then sits at an empty prompt and
             # reads as "stuck" to whoever is watching, when in truth nothing was
@@ -362,8 +380,8 @@ def spawn(kind: str, title: str, command: str) -> tuple[bool, str]:
             except Exception:
                 boot = ""
             if boot:
-                _resend_boot_if_idle(title, boot)
-            return True, "tmux window"
+                _resend_boot_if_idle(target, boot)
+            return True, "tmux window" + (f" in session {session}" if session else "")
         except (OSError, subprocess.SubprocessError) as exc:
             return False, str(exc)
     else:
@@ -494,7 +512,20 @@ def main(argv=None) -> int:
 
     ok = 0
     for seat in sorted(chosen, key=lambda s: (s.get("role") != "parent", s["id"])):
-        good, detail = spawn(kind, seat["id"], build_command(seat, mail_root))
+        # A seat added to roster.json but never `agentmail-init`ed has no maildir.
+        # agentmail-run then exits immediately and the seat is DEAD -- while this
+        # tool cheerfully printed "launched" and "1/1 launched". That happened on
+        # 2026-09-28 and cost a silent restart. Refuse loudly instead, and say the
+        # exact command that fixes it: creating the maildir here would paper over
+        # a setup step the operator should know they skipped.
+        seat_maildir = os.path.join(mail_root, seat["id"], "new")
+        if not os.path.isdir(seat_maildir):
+            init = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agentmail-init")
+            print(f"  FAILED    {seat['id']}   no maildir at {os.path.dirname(seat_maildir)}")
+            print(f"            fix: {init} -d {mail_root} {seat['id']}")
+            continue
+        good, detail = spawn(kind, seat["id"], build_command(seat, mail_root),
+                             session=seat.get("project"))
         print(f"  {'launched' if good else 'FAILED  '}  {seat['id']}"
               + ("" if good else f"   {detail}"))
         ok += 1 if good else 0
