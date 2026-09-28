@@ -1,0 +1,158 @@
+#!/usr/bin/env python3
+"""Verify every roster seat's pinned model id against TODAY's local model catalogue.
+
+Phase 1 of modelpick-0927-x2q5 (agentmail/research/modelpick/DESIGN.md). This is the
+"existence and entitlement is a file read, not a web search believed once" check: it
+reads the two caches each runtime's own CLI already writes
+(~/.codex/models_cache.json, ~/.claude/cache/model-catalog/*.json) and flags any
+roster seat whose model id is not a key in today's file for its runtime. It reports;
+it never edits roster.json or any other live fleet file. A model that is not
+installed or not entitled must never be recommended, and this is how that gets
+checked on every run instead of assumed once (2026-09-12's gpt-5.3-codex-spark was
+verified working and gone nine days later -- nobody would have noticed until a
+launch failed).
+
+Usage:
+  catalog-check [-d MAIL_ROOT] [--help]
+
+  -d, --mail-root   .agent-mail directory to read roster.json from. Default:
+                    walk up from cwd looking for .agent-mail, like
+                    agentmail-launch does.
+
+Read-only. Exit 0 = every checkable seat verified clean. Exit 1 = one or more
+mismatches, or a catalogue could not be read (verification could not run, which is
+itself a finding, not a pass). Exit 2 = usage error.
+"""
+import glob
+import json
+import os
+import sys
+import time
+
+CODEX_CACHE = os.path.expanduser("~/.codex/models_cache.json")
+CLAUDE_CACHE_GLOB = os.path.expanduser("~/.claude/cache/model-catalog/*.json")
+BIN = os.path.abspath(__file__).replace(os.path.expanduser("~"), "~", 1)
+DESCRIPTION = "Verify roster model ids against today's local Codex + Claude Code catalogues"
+
+
+def usage_error(msg: str) -> None:
+    print(f"error: {msg}")
+    print(f"help: {BIN} [-d MAIL_ROOT] [--help]")
+    sys.exit(2)
+
+
+def find_mail_root(start: str) -> str | None:
+    d = os.path.abspath(start)
+    while True:
+        cand = os.path.join(d, ".agent-mail")
+        if os.path.isdir(cand):
+            return cand
+        parent = os.path.dirname(d)
+        if parent == d:
+            return None
+        d = parent
+
+
+def load_codex():
+    if not os.path.exists(CODEX_CACHE):
+        return None, "missing -- run any `codex` command once to populate it"
+    try:
+        d = json.loads(open(CODEX_CACHE).read())
+    except Exception as e:
+        return None, f"unreadable ({e})"
+    ids = {m["slug"] for m in d.get("models", [])}
+    age_s = time.time() - os.path.getmtime(CODEX_CACHE)
+    return ids, f"{len(ids)} ids, fetched_at={d.get('fetched_at', '?')}, age={age_s:.0f}s"
+
+
+def load_claude():
+    files = sorted(glob.glob(CLAUDE_CACHE_GLOB), key=os.path.getmtime, reverse=True)
+    if not files:
+        return None, "missing -- open any Claude Code session once to populate it"
+    try:
+        d = json.loads(open(files[0]).read())
+    except Exception as e:
+        return None, f"unreadable ({e})"
+    ids = {m["id"] for m in d.get("catalog", {}).get("config", {}).get("models", [])}
+    stale = time.time() * 1000 > d.get("staleAt", 0)
+    return ids, f"{len(ids)} ids, fetchedAt={d.get('fetchedAt', '?')}, stale={stale}"
+
+
+def main(argv):
+    mail_root = None
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in ("--help", "-h"):
+            print(f"bin: {BIN}")
+            print(f"description: {DESCRIPTION}")
+            print(__doc__.strip())
+            return 0
+        if a in ("-d", "--mail-root"):
+            if i + 1 >= len(argv):
+                usage_error(f"{a} requires a value")
+            mail_root = argv[i + 1]
+            i += 2
+            continue
+        usage_error(f"unknown flag {a}")
+
+    print(f"bin: {BIN}")
+    print(f"description: {DESCRIPTION}")
+
+    codex_ids, codex_note = load_codex()
+    claude_ids, claude_note = load_claude()
+    print(f"codex catalog: {codex_note}")
+    print(f"claude catalog: {claude_note}")
+
+    if mail_root is None:
+        mail_root = find_mail_root(os.getcwd())
+    if not mail_root or not os.path.isdir(mail_root):
+        print("error: no .agent-mail directory found (pass -d MAIL_ROOT)")
+        return 1
+    roster_path = os.path.join(mail_root, "roster.json")
+    if not os.path.exists(roster_path):
+        print(f"error: roster not found at {roster_path}")
+        return 1
+
+    roster = json.loads(open(roster_path).read()).get("agents", {})
+    CATALOGUES = {"codex-cli": codex_ids, "claude-code": claude_ids}
+
+    mismatches = []
+    unverifiable_runtimes = set()
+    for name, seat in roster.items():
+        rt = seat.get("runtime") or "claude-code"
+        model = seat.get("model")
+        if model is None or rt not in CATALOGUES:
+            continue
+        ids = CATALOGUES[rt]
+        if ids is None:
+            unverifiable_runtimes.add(rt)
+            continue
+        if model not in ids:
+            mismatches.append((name, rt, model))
+
+    if unverifiable_runtimes:
+        print(f"warning: could not verify runtime(s) {sorted(unverifiable_runtimes)} -- their catalogue was missing or unreadable")
+
+    if not mismatches:
+        print("mismatches: 0 - every checkable roster model id verified against today's local catalogue")
+        help_lines = []
+    else:
+        print(f"mismatches[{len(mismatches)}]{{seat,runtime,model}}:")
+        for name, rt, model in mismatches:
+            print(f"  {name},{rt},{model}")
+        help_lines = [
+            "these ids are pinned in roster.json but absent from today's local catalogue for their runtime",
+            "this tool is read-only and does not edit roster.json -- escalate the fix by mail (rule 12), do not hand-edit the roster from here",
+        ]
+
+    if help_lines:
+        print(f"help[{len(help_lines)}]:")
+        for h in help_lines:
+            print(f"  {h}")
+
+    return 1 if (mismatches or unverifiable_runtimes) else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

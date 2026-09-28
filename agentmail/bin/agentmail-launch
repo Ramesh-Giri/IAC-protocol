@@ -34,6 +34,7 @@ WHAT IT GUARANTEES
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import platform
@@ -44,8 +45,152 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 from iac import local_config, local_site as resolve_site, valid_id
+import model_guard as _mg
 
 TOOL_VERSION = "1.1.0"
+
+# ---------------------------------------------------------------------------
+# Model guard integration (modelpick-0927-x2q5, phase 3 -- authorized by Ramesh via
+# overseer-ramesh, 2026-09-27, reversing the original "touch no live fleet tooling" boundary
+# for this one wiring). ADVISORY ONLY at this integration point: it reports and logs what the
+# hard-rule guard thinks of the roster's OWN model choice for each seat; it never substitutes
+# a different model and never blocks a launch. The launch always uses seat["model"] exactly as
+# roster.json has it, unchanged -- "an absent model stays a finding, never a substitution",
+# and the launcher's own long-standing rule from day one: "Never block a launch."
+#
+# THE NON-NEGOTIABLE: a launch must never fail because of the guard. Every function below is
+# wrapped so that a missing catalogue, a malformed pattern file, an exception inside
+# model_guard.resolve(), or the guard rejecting every candidate all degrade to "no guard
+# opinion available" and the launch proceeds exactly as it would have with no guard at all.
+# ---------------------------------------------------------------------------
+
+
+def _load_catalogues() -> dict[str, set[str] | None]:
+    """{"codex-cli": {...ids...} | None, "claude-code": {...ids...} | None}. Reuses
+    catalog-check's own loaders (not duplicated) via importlib, since that file has no .py
+    extension. Any failure here degrades to {both: None} -- the guard then skips the
+    allowlist check entirely rather than raising or reporting a false "nothing is valid"."""
+    try:
+        import importlib.util
+        from importlib.machinery import SourceFileLoader
+        cc_path = str(Path(__file__).resolve().with_name("catalog-check"))
+        spec = importlib.util.spec_from_file_location("catalog_check", cc_path,
+                                                        loader=SourceFileLoader("catalog_check", cc_path))
+        catalog_check = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(catalog_check)
+        codex_ids, _ = catalog_check.load_codex()
+        claude_ids, _ = catalog_check.load_claude()
+        return {"codex-cli": codex_ids, "claude-code": claude_ids}
+    except Exception:
+        return {"codex-cli": None, "claude-code": None}
+
+
+def guard_report(seat: dict) -> dict:
+    """Advisory guard opinion for one roster seat's OWN (runtime, model) choice. Never
+    raises -- any failure anywhere in here degrades to a report that says so, with the
+    roster's own value as the (only) candidate, so a caller can always proceed. Returns:
+        {"decision": model_guard.Decision | None, "mismatch": bool, "error": str | None}
+    `mismatch` is True only when the guard is confident (no error) AND the roster's own model
+    is not among the survivors -- i.e. the guard would have removed the very thing the roster
+    currently launches with.
+    """
+    try:
+        runtime = seat.get("runtime") or "claude-code"
+        model = seat.get("model")
+        pinned = seat.get("role") in ("parent", "council")
+        if not model:
+            return {"decision": None, "mismatch": False, "error": "seat has no model pinned; nothing to check"}
+        if _CATALOGUE_CACHE[0] is None:
+            _CATALOGUE_CACHE[0] = _load_catalogues()
+        catalogues = _CATALOGUE_CACHE[0]
+        candidates = [_mg.Candidate(runtime=runtime, model=model)]
+        decision = _mg.resolve(
+            candidates,
+            task_kind=None,                 # no kind classifier in the launcher; Laya is nowhere near this path
+            task_text=seat.get("description") or "",
+            host_tool_required=bool(seat.get("host_tool")),
+            verified_ids=catalogues,
+            pinned=pinned,
+        )
+        mismatch = (not pinned) and not any(c.runtime == runtime and c.model == model for c in decision.candidates)
+        return {"decision": decision, "mismatch": mismatch, "error": None}
+    except Exception as exc:  # the guard must NEVER be why a launch fails
+        return {"decision": None, "mismatch": False, "error": f"guard error, degraded to roster value: {exc!r}"}
+
+
+_CATALOGUE_CACHE: list = [None]  # loaded once per process, lazily, on first guard_report() call
+
+
+def _guard_summary_line(report: dict) -> str:
+    """One line for the plan output. Never the reason a plan fails to print."""
+    try:
+        if report["error"]:
+            return f"unavailable ({report['error']})"
+        if report["decision"] is None:
+            return "no opinion"
+        if report["mismatch"]:
+            return ("MISMATCH -- the guard would remove the roster's own model choice: "
+                    + "; ".join(report["decision"].reasons))
+        return "OK -- " + "; ".join(report["decision"].reasons)
+    except Exception as exc:
+        return f"unavailable (guard summary itself failed: {exc!r})"
+
+
+def _print_full_roster_guard_audit(agents: dict) -> None:
+    """The full-roster proof requested for modelpick-0927-x2q5 phase 3: run the guard over
+    EVERY roster seat (not just ones with a home directory that exists on this machine -- a
+    closed seat's fixed violation still needs to show up here), and report the diff between
+    what the roster holds and what the guard would allow. An empty diff is the pass condition;
+    the overseer asked to be mailed and told to STOP if it is not empty. This function only
+    prints -- it never raises, and it changes nothing."""
+    try:
+        print("guard audit — full roster (every seat, home directory or not)")
+        mismatches = []
+        checked = 0
+        for sid, meta in agents.items():
+            seat = dict(meta)
+            seat["id"] = sid
+            report = guard_report(seat)
+            if report["error"] is None:
+                checked += 1
+            if report["mismatch"]:
+                mismatches.append((sid, seat.get("runtime") or "claude-code", seat.get("model"), report["decision"].reasons))
+        print(f"  seats checked: {checked} of {len(agents)} (others: no model pinned, or a guard error, both counted as no-opinion, never as a pass)")
+        print(f"  mismatches: {len(mismatches)}")
+        for sid, rt, model, reasons in mismatches:
+            print(f"    {sid}  runtime={rt}  model={model}")
+            for r in reasons:
+                print(f"        - {r}")
+        print()
+    except Exception as exc:
+        print(f"  guard audit failed to run ({exc!r}) -- this affects reporting only, not any launch\n")
+
+
+def _log_launch_decision(seat: dict, mail_root: str) -> None:
+    """Append one decision-log line for a seat that was just (attempted to be) launched.
+    Logs the ACTUAL choice used -- always seat['model'], unchanged, since the guard is
+    advisory at this integration point -- alongside the guard's opinion, so a later reader can
+    see every case where they disagreed, not just today's (expected empty) diff. Never raises:
+    a logging failure must not be why a launch reports as failed."""
+    try:
+        report = guard_report(seat)
+        runtime = seat.get("runtime") or "claude-code"
+        model = seat.get("model")
+        final_choice = {"runtime": runtime, "model": model} if model else None
+        decision = report["decision"]
+        if decision is None:
+            # No decision object (no model pinned, or the guard itself errored) -- still log
+            # a line, per "one line per launch, even when it falls back", using an empty
+            # placeholder decision so the schema stays uniform.
+            decision = _mg.Decision(candidates=[], candidates_in=[], reasons=[report["error"] or "no model pinned"],
+                                     locked_audit=False, locks_fired=[],
+                                     brief_hash=hashlib.sha256((seat.get("description") or "").encode("utf-8")).hexdigest())
+        log_path = os.path.join(mail_root, "model-decisions.jsonl")
+        _mg.write_decision_log(log_path, decision, task_id=seat["id"], seat=seat["id"],
+                                task_kind=None, pinned=seat.get("role") in ("parent", "council"),
+                                final_choice=final_choice)
+    except Exception:
+        pass  # logging must never be why a launch fails or reports wrong
 
 BOOT_CHILD = ("Arm your mail watcher (persistent) FIRST, then check your mail "
               "and get oriented.")
@@ -330,7 +475,11 @@ def main(argv=None) -> int:
         cmd = build_command(seat, mail_root)
         flag = " · unattended" if seat["_skip_permissions"] else " · prompts"
         print(f"  {seat['id']}   [{seat.get('model') or 'default model'}{flag}]")
-        print(f"      {cmd}\n")
+        print(f"      {cmd}")
+        print(f"      guard: {_guard_summary_line(guard_report(seat))}\n")
+
+    if args.all:
+        _print_full_roster_guard_audit(agents)
 
     if any(s["_skip_permissions"] for s in chosen):
         print("  NOTE: --dangerously-skip-permissions is set for the child seats above. Those")
@@ -349,6 +498,7 @@ def main(argv=None) -> int:
         print(f"  {'launched' if good else 'FAILED  '}  {seat['id']}"
               + ("" if good else f"   {detail}"))
         ok += 1 if good else 0
+        _log_launch_decision(seat, mail_root)  # never raises; see its own try/except
     print(f"\n{ok}/{len(chosen)} launched.")
     print("Each window is titled with its seat id. Confirm they are alive with:")
     print(f"  {os.path.join(os.path.dirname(os.path.abspath(__file__)), 'network-dashboard')}")
