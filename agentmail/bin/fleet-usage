@@ -19,7 +19,9 @@ def tmux(*a, **kw):
 
 def probe(session: str, binary: str, command: str, boot_wait: int, read_wait: int) -> str:
     win = f"usage-{uuid.uuid4().hex[:6]}"
-    tmux("new-window", "-d", "-t", session, "-n", win)
+    # "-t <session>:" (trailing colon) targets the SESSION; a bare name can resolve
+    # to a window instead, and the probe then reads an empty pane.
+    tmux("new-window", "-d", "-t", f"{session}:", "-n", win)
     try:
         tmux("send-keys", "-t", f"{session}:{win}", "-l", binary)
         tmux("send-keys", "-t", f"{session}:{win}", "Enter")
@@ -34,7 +36,10 @@ def probe(session: str, binary: str, command: str, boot_wait: int, read_wait: in
         time.sleep(1)
         tmux("send-keys", "-t", f"{session}:{win}", "Enter")
         time.sleep(read_wait)
-        return tmux("capture-pane", "-p", "-t", f"{session}:{win}").stdout
+        # Read scrollback, not just the visible screen: Claude's /usage renders
+        # the limit rows ABOVE a long "what's contributing" section, so a plain
+        # capture-pane missed them and reported "did not render" (2026-09-14).
+        return tmux("capture-pane", "-p", "-S", "-300", "-t", f"{session}:{win}").stdout
     finally:
         tmux("kill-window", "-t", f"{session}:{win}")
 
@@ -53,7 +58,7 @@ def main() -> int:
     if not claude:
         print("  claude not installed")
     else:
-        out = probe(args.session, claude, "/usage", 14, 8)
+        out = probe(args.session, claude, "/usage", 20, 14)
         rows = [l.strip() for l in out.splitlines()
                 if re.search(r"\d+%\s*used|Resets|weekly limit|Current (week|session)", l)]
         print("\n".join("  " + r for r in rows) if rows
@@ -64,7 +69,7 @@ def main() -> int:
     if not codex:
         print("  codex not installed")
     else:
-        out = probe(args.session, codex, "/status", 16, 8)
+        out = probe(args.session, codex, "/status", 22, 12)
         rows = [l.strip(" │") for l in out.splitlines()
                 if re.search(r"limit:|Account:|Model:", l)]
         print("\n".join("  " + r for r in rows) if rows
