@@ -1,0 +1,142 @@
+#!/usr/bin/env python3
+"""fleet-guard: ALERT-ONLY watcher so the overseer cannot silently forget seats.
+
+It never closes, kills or messages anything. The main agent (overseer) reads the
+alerts and decides: assign work, nudge, or close the seat itself.
+
+Run as a persistent Monitor:
+    agentmail/bin/fleet-guard [--window circle:circle-agents] [--root <mail root>] [--overseer overseer-ramesh]
+
+Emits one line per problem:
+    IDLE <seat> <N>m unread=<n>      pane not working for >= --idle minutes (repeats every --repeat minutes)
+    CODEX-UNREAD <seat> unread=<n>   idle Codex seat with unread mail (Codex does not wake on mail)
+    OVERSEER-UNREAD <n>              overseer has unread mail older than 2 minutes
+    GONE <seat>                      a titled pane disappeared
+
+Added 2026-09-14 after the overseer twice left finished or waiting seats idle
+(Ramesh: "you're forgetting things").
+"""
+import argparse, os, re, subprocess, time
+
+ap = argparse.ArgumentParser()
+ap.add_argument("--window", default="circle:circle-agents")
+ap.add_argument("--root", default="/Users/darkness/Work/Aureus/.agent-mail")
+ap.add_argument("--overseer", default="overseer-ramesh")
+ap.add_argument("--idle", type=int, default=2)
+ap.add_argument("--repeat", type=int, default=15)
+ap.add_argument("--interval", type=int, default=60)
+ap.add_argument("--stuck", type=int, default=8, help="minutes of unchanged 'working' screen before STUCK")
+a = ap.parse_args()
+
+def sh(*cmd):
+    return subprocess.run(cmd, capture_output=True, text=True).stdout
+
+def runner_alive(seat):
+    """True if the seat's agentmail-run process exists.
+
+    A pane title vanishing is NOT evidence that a seat died: titles change with
+    Claude Code's status glyph and pane indices shift when a neighbouring seat
+    is closed. Both produced false GONE alerts on 2026-09-22 while all seats
+    were demonstrably alive. The process is the subject; the title is a proxy.
+    """
+    out = sh("pgrep", "-f", f"agentmail-run --seat {seat}")
+    return bool(out.strip())
+
+
+def unread(seat):
+    d = os.path.join(a.root, seat, "new")
+    try:
+        return len([f for f in os.listdir(d) if not f.startswith(".")])
+    except OSError:
+        return 0
+
+PROMPTS = ("do you want to proceed", "yes, i trust", "trust this folder", "enter to confirm",
+           "allow once", "approve this", "press enter to continue", "waiting for approval",
+           # Claude Code selection dialogs, e.g. the Opus 5 "Model switch" safeguard prompt
+           # that blocked two security seats (2026-09-15, 2026-09-16) with no alert.
+           "enter to select", "model switch", "safeguards flagged")
+idle_since, last_emit, last_codex, seen = {}, {}, {}, set()
+last_sig, last_stuck, last_prompt, last_dialog = {}, {}, {}, 0.0
+while True:
+    now = time.time()
+    # macOS GUI dialogs (Gatekeeper "downloaded from the internet", permission asks) are
+    # invisible to tmux but block the seat's command until a human clicks.
+    # CoreServicesUIAgent lingers after a dialog closes, so require an actual window.
+    wins = ""
+    if sh("pgrep", "-x", "CoreServicesUIAgent").split():
+        wins = sh("osascript", "-e", 'tell application "System Events" to get name of every window of process "CoreServicesUIAgent"').strip()
+    if wins and now - last_dialog >= 300:
+        print("MACOS-DIALOG CoreServicesUIAgent is up: a Gatekeeper/permission dialog may be blocking a seat (tell Ramesh what to click, then fix the cause)", flush=True)
+        last_dialog = now
+    current = set()
+    for line in sh("tmux", "list-panes", "-t", a.window, "-F", "#{pane_id}|#{pane_title}").splitlines():
+        pane, _, title = line.partition("|")
+        # Claude Code retitles its pane with a status glyph ("✳ <seat>", or a spinner
+        # while working). Matching the raw title against the maildir skipped every such
+        # seat, so the guard watched almost nothing on 2026-09-16. Keep the seat id only.
+        title = re.sub(r"^[^A-Za-z0-9]+", "", title).strip()
+        if not title or not os.path.isdir(os.path.join(a.root, title)):
+            continue
+        current.add(title)
+        screen = sh("tmux", "capture-pane", "-p", "-t", pane)
+        n = unread(title)
+        # Only the bottom of the pane: a real dialog renders just above the status line,
+        # while code and diffs the agent is editing scroll past higher up. Scanning the
+        # whole screen raised PROMPT for "approve this" inside a KYB diff (2026-09-16).
+        low = "\n".join([l for l in screen.splitlines() if l.strip()][-16:]).lower()
+        if any(p in low for p in PROMPTS) and now - last_prompt.get(title, 0) >= 300:
+            print(f"PROMPT {title} (pane is waiting on a question or permission prompt)", flush=True)
+            last_prompt[title] = now
+        # Only the live status area at the bottom counts: old "Working (" lines stay
+        # visible higher up in a Codex transcript and hid an idle seat (2026-09-14).
+        tail = "\n".join([l for l in screen.splitlines() if l.strip()][-6:])
+        # A Claude seat in a long "still thinking" phase drops the "esc to interrupt"
+        # hint but keeps a present-tense spinner line ("✻ Choreographing… (5m 34s"),
+        # which raised a false IDLE on 2026-09-16. Finished turns read "Churned for 17s".
+        # Search a slightly wider window: a "Tip:" hint under the spinner pushed it out
+        # of the 6-line tail and produced a false IDLE 17m for a working reviewer.
+        wide = "\n".join([l for l in screen.splitlines() if l.strip()][-12:])
+        spinning = re.search(r"\w…\s*\(\d", wide) is not None
+        if "esc to interrupt" in tail or "Working (" in tail or spinning:
+            idle_since.pop(title, None)
+            # A blocked seat still shows a spinner; detect it by an unchanged screen
+            # (ignoring spinner glyphs and elapsed-time counters).
+            sig = re.sub(r"[⠀-⣿✠-❋·*]|\d+", "", screen)
+            # A scrolled-up Claude pane keeps an identical screen while it works;
+            # only its "N new messages" counter grows. Keep that number, or the
+            # digit stripping above reports a busy seat as STUCK (2026-09-17).
+            sig += "".join(re.findall(r"(\d+) new messages", screen))
+            prev = last_sig.get(title)
+            if prev is None or prev[0] != sig:
+                last_sig[title] = (sig, now)
+            elif now - prev[1] >= a.stuck * 60 and now - last_stuck.get(title, 0) >= a.repeat * 60:
+                print(f"STUCK {title} screen unchanged {int((now - prev[1]) // 60)}m while 'working' (hung command or hidden dialog?)", flush=True)
+                last_stuck[title] = now
+            continue
+        last_sig.pop(title, None)
+        start = idle_since.setdefault(title, now)
+        mins = int((now - start) // 60)
+        if "gpt-" in screen and n > 0 and mins >= 1 and now - last_codex.get(title, 0) >= 300:
+            print(f"CODEX-UNREAD {title} unread={n}", flush=True)
+            last_codex[title] = now
+        if mins >= a.idle and now - last_emit.get(title, 0) >= a.repeat * 60:
+            print(f"IDLE {title} {mins}m unread={n}", flush=True)
+            last_emit[title] = now
+    for t in seen - current:
+        if runner_alive(t):
+            continue          # pane retitled or renumbered; the seat is fine
+        print(f"GONE {t}", flush=True)
+        idle_since.pop(t, None); last_emit.pop(t, None); last_codex.pop(t, None)
+    seen = current
+    # Age is measured from when the guard FIRST saw the file, not its mtime:
+    # mail files can carry an older mtime, which raised false alarms.
+    od = os.path.join(a.root, a.overseer, "new")
+    try:
+        names = {f for f in os.listdir(od) if not f.startswith(".")}
+    except OSError:
+        names = set()
+    first_seen = {f: first_seen.get(f, now) for f in names} if "first_seen" in globals() else {f: now for f in names}
+    old = [f for f, t in first_seen.items() if now - t > 120]
+    if old:
+        print(f"OVERSEER-UNREAD {len(old)}", flush=True)
+    time.sleep(a.interval)
