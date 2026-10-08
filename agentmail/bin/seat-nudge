@@ -1,0 +1,20 @@
+#!/bin/sh
+# seat-nudge <tmux-pane-id> <message> - type a message into a seat pane and
+# make sure it is SUBMITTED (Codex can swallow the Enter after a fast paste;
+# 2026-10-08 seats sat with prompts typed but unsent). Retries Enter until
+# the pane shows "to interrupt". Exit 1 if it never starts.
+pane="$1"; shift; msg="$*"
+[ -n "$pane" ] && [ -n "$msg" ] || { echo "usage: seat-nudge <pane> <message>" >&2; exit 2; }
+tmux send-keys -t "$pane" -l "$msg"
+i=0
+while [ $i -lt 4 ]; do
+  sleep 2; tmux send-keys -t "$pane" Enter
+  j=0
+  while [ $j -lt 8 ]; do
+    sleep 1
+    tmux capture-pane -p -t "$pane" | grep -q "to interrupt" && { echo "submitted: $pane"; exit 0; }
+    j=$((j+1))
+  done
+  i=$((i+1))
+done
+echo "WARNING: $pane never started working" >&2; exit 1
