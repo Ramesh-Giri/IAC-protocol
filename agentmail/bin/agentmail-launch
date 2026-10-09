@@ -252,6 +252,20 @@ def _submit_until_working(window: str, tries: int = 4) -> bool:
     import time
     for _ in range(tries):
         time.sleep(2)
+        # A claude-mem upgrade makes Codex open its hook-trust screen ("Modified
+        # since last trusted - review required") before the first prompt; the
+        # seat then sits there forever (2026-10-09, 3 seats). These are our own
+        # previously trusted claude-mem hooks: trust them and close the screens.
+        for _ in range(8):
+            pane = subprocess.run(["tmux", "capture-pane", "-p", "-t", window],
+                                  capture_output=True, text=True, timeout=10).stdout
+            if "review required" in pane:
+                subprocess.run(["tmux", "send-keys", "-t", window, "t"], timeout=10)
+            elif "esc back" in pane or "esc close" in pane:
+                subprocess.run(["tmux", "send-keys", "-t", window, "Escape"], timeout=10)
+            else:
+                break
+            time.sleep(1)
         subprocess.run(["tmux", "send-keys", "-t", window, "Enter"], timeout=10)
         for _ in range(8):
             time.sleep(1)
