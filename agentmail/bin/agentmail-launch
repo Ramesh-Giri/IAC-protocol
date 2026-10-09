@@ -344,6 +344,11 @@ def build_command(seat: dict, mail_root: str) -> str:
         # only the paths a task needs, never a blanket sandbox bypass.
         for extra in seat.get("add_dirs", []):
             parts += ["--add-dir", extra]
+        # Roster "network": true lets the sandbox open sockets. flutter test and
+        # the functions suite need a localhost socket; without it every seat
+        # handed its own verification back to the overseer (2026-10-09).
+        if seat.get("network"):
+            parts += ["-c", "sandbox_workspace_write.network_access=true"]
         if seat.get("model"):
             parts += ["--model", seat["model"]]
         # Codex has no persistent Monitor tool, so "arm your watcher" made it reach
