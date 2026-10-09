@@ -392,11 +392,14 @@ def spawn(kind: str, title: str, command: str, session: str | None = None) -> tu
             # the session explicitly, creating it detached if it does not exist.
             target = title
             if session:
-                if subprocess.run(["tmux", "has-session", "-t", session],
+                if subprocess.run(["tmux", "has-session", "-t", f"={session}"],
                                   capture_output=True, timeout=10).returncode != 0:
                     subprocess.run(["tmux", "new-session", "-d", "-s", session],
                                    check=True, timeout=15)
-                subprocess.run(["tmux", "new-window", "-t", session, "-n", title, command],
+                # "=session:" = exact session, next free index. A bare "-t skyzai"
+                # can resolve to a WINDOW whose name starts with "skyzai" (the
+                # previous seat's), giving "index in use" (2026-10-09).
+                subprocess.run(["tmux", "new-window", "-t", f"={session}:", "-n", title, command],
                                check=True, timeout=15)
                 # Session-qualified, so capture-pane/send-keys cannot hit a
                 # same-named window in another session.
