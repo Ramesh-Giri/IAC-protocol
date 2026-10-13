@@ -271,3 +271,14 @@ The map grows only by normal use: never tap around just to fill it.
 The overseer puts this rule in every brief that touches a device.
 
 *Revision: rule 25 added 2026-10-12.*
+
+## 26. Sweep open PRs and new branches every session
+
+Ramesh, 2026-10-13: "why the fuck did we not find the things circumvectio found?".
+Outside AI sessions (accounts circumvectio, baarbaaryan; branch prefixes `claude/`, `codex/`) had opened 14 PRs on skyzai_app with real findings (a CI analyzer error, APU replay authorization, account-deletion data loss, hard-coded credentials), and nobody in the fleet looked at them for months.
+At every session start, alongside the mail drain, the overseer runs `gh pr list --state open` and checks new remote branches on every active repo.
+New PRs are triaged the same day into merge, rework or close, and every closure carries a comment saying why.
+A real finding inside a PR that is closed becomes a fresh fix task against current code; closing the PR never closes the finding.
+Template: `.agent-mail/attachments/prtriage-1013/BRIEF.md` and its TRIAGE.md.
+
+*Revision: rule 26 added 2026-10-13.*
