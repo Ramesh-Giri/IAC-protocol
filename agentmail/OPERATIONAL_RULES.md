@@ -46,7 +46,16 @@ Before pushing, pull — and treat the pull as delivering **mail, not just code*
 
 ## 9. Launch children in a per-project tmux session, and always `--terminal tmux`
 
-Start each child seat as a window in a tmux session **named for the PROJECT** (`circle`, `skyzai`, …) — never one shared session, and never named for the org/overseer. Create it once (`tmux new-session -d -s <project>`), then `agentmail/bin/agentmail-launch --seat <seat> --terminal tmux --apply --skip-permissions`. **Always pass `--terminal tmux`.** The auto-detected iTerm/Terminal path either reports a launch that produced no live process, or — for the supervising overseer — is refused by the host's auto-mode classifier, which will not let one agent *directly* spawn an unsupervised (`--dangerously-skip-permissions`) agent; routing the spawn through `tmux new-window` is permitted, so tmux is the working path. Watcher-first is still mandatory (a session that boots unwatched goes deaf to mail). If the boot prompt does not auto-submit in the pane, type it in with `tmux send-keys -t <project>:<seat> "<boot prompt>" Enter` (note: send-keys **cannot** answer another agent's permission dialog — that is guarded — so fix the permission cause instead, see rule 10). tmux runs **headless**: to let a human watch a child you must attach a real terminal to it, and you must do that by **executing a `.command` file** (`open -a Terminal <file>`), *not* by `osascript ... do script "tmux attach …"` — that types the command and a shell startup prompt eats its first character. See **rule 13**, which is the whole failure and its fix. Before relaunching, `pgrep -f "agentmail-run --seat <seat>"` and kill any live instance first (rule 4: one session per inbox); killing the last window can take the tmux server down, so re-create the session if needed.
+Use a tmux session named for the project, such as circle, and preserve any existing session and work.
+Use agentmail-run-backed roster seats through agentmail-launch with --terminal tmux --apply.
+For Codex children omit --skip-permissions: the current launcher rejects it and retains the Codex sandbox.
+Claude-only bypass arguments are not portable; apply them only under the existing authorization and safeguards.
+The supervisor has a separate interactive approval profile and must pass the host-control checks in [SUPERVISOR_BOOTSTRAP.md](SUPERVISOR_BOOTSTRAP.md).
+A tmux route does not bypass an OS or runtime denial.
+Before replacement, identify the current seat runner and watcher and stop only the exact owned instances through an approved mechanism.
+Start the watcher first and explicitly submit the boot prompt if it was not executed.
+Execute an attachment script to open the required Terminal.app window; do not type a command into a startup-sensitive shell.
+Verify the target project, client/pane mapping and task acknowledgement before reporting the seat running.
 
 ## 10. A child must be able to READ the org root, or it stalls unattended
 
@@ -68,7 +77,12 @@ A headless tmux session satisfies `tmux ls` and satisfies nothing the operator a
 
 **Attach by EXECUTING a script, never by having AppleScript type a command.** `osascript -e 'tell application "Terminal" to do script "<cmd>"'` *types* the command into a newly-spawned interactive shell, so **anything the shell prints at startup that reads a keypress will swallow the first character** of that command. The symptom is a parade of unrelated-looking errors from what is one bug: `tmux attach` → `zsh: command not found: mux`; `/Users/x/y.command` → `no such file or directory: Users/x/y.command`; `exec /opt/...` → `command not found: xec`. In the incident that produced this rule the thief was oh-my-zsh's auto-update prompt (`[oh-my-zsh] Would you like to update? [Y/n]`), and six launch attempts were misread as six different failures before anyone compared them and noticed **exactly one character** was missing from each.
 
-**Every seat must be a PANE in one window, not a window per seat.** A launcher that opens one window per seat shows the operator a tab bar and exactly one agent; cycling windows to see the others is not seeing the fleet. After launching, collapse them: `tmux join-pane -s <project>:<seat> -t <project>:<first> -h` for each remaining seat, then `tmux select-layout ... tiled`, and set `pane-border-status top` so each pane is labelled. Verify with `tmux list-panes` — one line per seat; if `list-windows` still shows a window per seat, it is wrong.
+**Latest operator requirement, 2026-09-12: separate visible Terminal.app windows for children.**
+This supersedes the earlier single-window/panes-only instruction.
+Keep the project-named tmux organization, but verify each attached terminal actually displays its assigned seat.
+Multiple clients on one session may follow the same window selection; client count alone does not prove distinct seats are visible.
+Do not substitute hidden tabs, detached sessions or internal managed subagents.
+The main belongs in Ramesh's current terminal, currently iTerm2.
 
 **Send the boot prompt explicitly; do not trust it to auto-submit.** Passing the boot instruction as a CLI argument to the agent binary does not reliably execute it — seats sit at an empty prompt looking hung when in fact nothing was ever submitted, and the operator reasonably reports them as "stuck". After launch, `tmux send-keys -t <pane> -l "<boot>"`, pause, then send `Enter`. Confirm by reading the pane: an interrupt hint ("esc to interrupt") means it is working; a bare prompt means it is not.
 
@@ -117,3 +131,143 @@ Asked which terminal it was on, a supervisor answered with the *fleet's* termina
 *A recurring meta-lesson behind several of these: a guard or field that reads **prose** instead of **behaviour** — a check that passes because a name appears in a docstring, a column that cannot change while claiming to track a changing thing — is worse than none, because it ships as evidence. Test a guard by trying to break it; if you have not tried, it is not evidence.*
 
 *Revision: first issue, 2026-09-04; amended 2026-09-12 (rule 13: the operator must SEE the fleet — attach a real terminal by EXECUTING a .command file, never by AppleScript-typing a command into a shell, because a startup prompt eats the first keystroke); amended 2026-09-11 (added rules 9–11: per-project tmux launch; the org-root read-block that stalls unattended children; every spawned worker being a mail seat that escalates by mail rather than prompting a human; and children launched with their interactive-question tool removed so they physically cannot prompt the operator). Amend by appending a dated revision; do not silently overwrite.*
+
+## 17. Prove supervisor capabilities before completing a handoff
+
+Follow [SUPERVISOR_BOOTSTRAP.md](SUPERVISOR_BOOTSTRAP.md).
+Keep supervisor and child permission profiles separate and validate runtime-specific launch arguments before use.
+Verify actual process control, tmux access, terminal attachment and closure, and unique mail/watch round trips through approved controls.
+Do not infer capabilities from requested flags, writable filesystem paths or internal subagent availability.
+If effective policy denies an operation and provides no approval route, report the exact blocker and prepare durable context rather than bypassing it.
+Only mark the visible fleet running after seat identity, terminal mapping, watcher ownership and task acknowledgement are verified.
+Transfer watcher/inbox ownership without duplicate consumers, then terminate the identified outgoing main and its dedicated window after preserving its state.
+Watcher exit is not main-session exit.
+
+## 18. Name every seat after its SEAT, not its repository
+
+Ramesh, 2026-09-14: several seats shared one repository and every session showed the same name ("skyzai_app"), so nobody could tell the agents apart.
+Claude Code labels a session by its working directory unless it is given a name.
+Launch every Claude seat with `claude --name <seat-id>`; `agentmail-launch` now does this automatically.
+Also title the tmux pane with the seat id (`tmux select-pane -T <seat-id>` with `pane-border-status top`), so the grid shows who is who.
+When reporting to the operator, refer to agents by seat id, never by repository or app name.
+A second, related lesson from the same launch: a repository's own CLAUDE.md may name a single seat ("Your seat: skyzai-ramesh"); a worker seat started in that repository will reasonably doubt its identity.
+Give it verifiable evidence (its roster entry, its own `agentmail-run --seat` process arguments, its queued task mail), never an unverifiable assertion, and add a line to that CLAUDE.md saying roster worker seats are valid.
+
+## 19. Two budgets, one fleet: smart runtime switching and cross-runtime spawning
+
+Ramesh, 2026-09-14: Claude and Codex are both installed and have SEPARATE budgets; the fleet must not drain one while the other idles, and either runtime's main must be able to spawn the other runtime's agents.
+Standing procedure for whichever agent holds the overseer seat (Claude or Codex):
+
+- Measure, do not guess: run `agentmail/bin/fleet-usage` (reads Claude /usage and Codex /status, no model calls) at session start, before launching any seat, at least every 2 hours while seats run, and immediately when any seat reports a limit warning. Record the numbers and reset times in conversation-context/CURRENT_STATE.md. A "could not read" result is a failed check, not zero budget.
+- Pick the runtime per seat by (1) task fit, then (2) budget: prefer the pool that has unused budget and resets soonest (unused budget is lost at reset), while (3) keeping floors: do not push a pool below about 15% unless it resets within 24 hours, and always keep enough Claude or Codex for the overseer seat itself.
+- Separate Codex pools: the Codex account shows a main weekly limit and a separate GPT-5.3-Codex-Spark limit; route small, mechanical work (lint fixes, docs, test scaffolding, simple renames) to Spark before spending the main pool.
+- Task fit: Codex seats suit well-scoped code-only authoring, read-only reviews, cross-runtime second opinions, test writing and mechanical edits. Claude seats suit work that needs host tools (tmux, emulators and local sockets, flutter test on the host, GUI/Gatekeeper prompts), long house-pattern Flutter UI work, and security-critical authoring. Right-size models inside each runtime (Codex: spark, luna, terra, astra; Claude: haiku, sonnet, opus), never default to the largest.
+- Codex sandbox realities: `workspace-write` blocks writes outside the cwd and `--add-dir` paths. A git worktree's metadata lives in the main repository's `.git`, so a Codex seat that must COMMIT in a worktree needs that `.git` added; local sockets (databases, emulators) may be denied. Read-only review seats have neither problem.
+- Cross-runtime review: when possible the reviewer runs on the other runtime than the author (independent model family, and it spreads spend).
+- Main handover across runtimes: when the overseer's own runtime approaches its floor, prepare the handoff and propose moving the overseer seat to the other runtime (SUPERVISOR_BOOTSTRAP.md), rather than stalling the fleet.
+- Seats report any quota or limit warning to the overseer by mail at once; the overseer rebalances by closing and relaunching work on the other runtime (rule 18 naming, close-when-done policy).
+- STRICT frugality (Ramesh, 2026-09-14, "follow that strictly"): run the fewest concurrent seats that meet the deadline. A seat is ended as soon as its specific unit is done, and is NOT kept idle waiting for a verdict or a possible follow-up; follow-ups go to a fresh seat, preferably on the runtime with more headroom. Idle Claude seats still spend tokens every time a mail or monitor event wakes them with their full context.
+- Lean on the lower-cost option in both directions: while one pool is low, push suitable work to the other so both last longer; when that pool recovers, rebalance back. Expensive models (Opus, GPT-6-Astra) only for work that needs them (security-critical authoring, hard reviews); reviews and mechanical follow-ups default to the cheaper runtime and model.
+- The overseer seat itself is usually the largest single consumer: keep its turns lean, delegate reading-heavy checks to a cheap seat, and avoid re-reading large outputs.
+- Closing a finished seat (Ramesh, 2026-09-14): the seat's DONE mail must already be a complete handoff (branch, SHA, tests, done/not done, gotchas, next steps). The overseer then closes it directly: TERM the exact `agentmail-run --seat <seat>` runner (rule 14), verify the runner, agent and watcher are gone, and retile the grid. Do not type `/exit` into the agent's pane and do not require a READY-TO-CLOSE round-trip.
+- Mail frugality (Ramesh, 2026-09-14, "follow strictly"): every mail costs tokens for the writer, the reader, and each woken agent's full context. Task mails point at a spec or handoff file instead of repeating it; decisions go out as one batched mail; facts flow peer-to-peer between seats; seats mail only at milestones (ACK, blocker, DONE); the overseer reads subjects first and opens bodies only when needed; research and bulk reading go to a cheap seat (e.g. Codex Spark with `--search`).
+- Frugal reading has one exception: verdicts, blockers, questions and DONE mails are always opened in full the moment they arrive. On 2026-09-14 a Codex BLOCK and a seat's report were drained by subject only, and two seats sat idle for ten minutes waiting on the overseer. When a seat looks idle, check the overseer's own unread and skimmed mail first.
+- Codex seats do not wake on new mail (observed 2026-09-14: a Codex reviewer sat idle with 4 unread task mails while Claude seats woke through their Monitor watcher). After mailing a Codex seat that is idle, nudge its pane once ("run mail-read <seat> and act on it") and confirm it shows Working; tell Codex seats to run mail-check before stopping after each unit.
+- Token-efficiency reasoning, adopted practices and rejected options: [TOKEN_EFFICIENCY.md](TOKEN_EFFICIENCY.md).
+- No automatic closing (Ramesh, 2026-09-14): only the main agent (overseer) closes seats, after checking the handoff. Seats never close themselves and no script closes seats. The overseer runs `agentmail/bin/fleet-guard` as a persistent Monitor; it is ALERT-ONLY (IDLE, CODEX-UNREAD, OVERSEER-UNREAD, GONE lines) so a finished or waiting seat cannot be forgotten. On each alert the overseer acts the same turn: assign work, nudge, or close the seat itself.
+- A blocked seat looks busy (Ramesh, 2026-09-14: "one is blocked and you didn't know"): a seat's `flutter test` hung on a macOS Gatekeeper dialog ("flutter_tester is an app downloaded from the internet") while its pane still showed a spinner, so an idle-only check missed it. fleet-guard now also alerts STUCK (screen unchanged for 8 minutes while "working"), PROMPT (question or permission prompt text in a pane) and MACOS-DIALOG (CoreServicesUIAgent up). Root cause removed the same day: `xattr -dr com.apple.quarantine /opt/homebrew/share/flutter/bin/cache`. Re-run it after any Flutter upgrade or cache re-download, before seats run flutter test.
+- Before closing a seat, record evidence that it is finished, not busy: its DONE/verdict mail is in, the bottom status line of its pane is past tense ("Worked for", "done") with an empty input, no "esc to interrupt"/"Working (" in the last lines, and no child command running. Report that evidence to the operator when closing. fleet-guard reads only the bottom status lines, because old "Working (" lines stay visible higher up in a Codex transcript.
+- Closing the LAST seat in the shared grid window destroys that window and the operator's Terminal view jumps to another window (2026-09-14). Before closing the last pane, first launch or join the next seat into the grid, or re-create circle:circle-agents immediately afterwards and `tmux select-window` it; then re-verify `tmux list-clients` shows the grid window.
+
+## 20. A watcher that expires is a seat that is deaf, and an alarm that matches the wrong name is no alarm
+
+Two failures on 2026-09-16, found while one security-audit seat sat blocked for many minutes and nothing raised an alert. Ramesh noticed it by looking at the screen.
+
+**Seat watchers expire.** A Claude seat arms its mail watcher as a Monitor, and a Monitor has a hard 30-minute lifetime. When it expires the seat is told once and must re-arm it. The audit seat did not, so it never saw the overseer's STOP mail, finished its turn, and asked "tell me whether to continue" in its own pane, where nobody reads.
+Every seat's boot instruction and task mail must say: re-arm the watcher every time it expires, for the whole run, and never end a turn with a question in the pane. The overseer applies the same rule to its own watcher and fleet-guard.
+When a seat seems to ignore mail, check its unread count first (`ls .agent-mail/<seat>/new | wc -l`); a non-zero count on an idle seat means its watcher died. A one-line pane nudge telling it to run `mail-read` is the recovery.
+
+**fleet-guard was blind to almost every seat.** Claude Code retitles its pane with a status glyph (`✳ <seat>`, or a spinner while working). fleet-guard matched the raw pane title against the maildir name, found no directory called `✳ skyzai-...`, and silently skipped the seat, so IDLE, STUCK and PROMPT never fired for it. Seats whose title the overseer had set by hand still matched, which made the guard look healthy. Fixed the same day: the title is stripped of any leading non-alphanumeric prefix before matching, and the prompt patterns now include Claude Code's selection dialogs ("enter to select", "model switch", "safeguards flagged") - a lesson first written down on 2026-09-15 and never implemented.
+Verified against the live panes: before the fix the audit seat was not watched; after it, it is. This is rule 15 again - a check that reports the same thing whether or not the subject failed is not a check. Test a guard by making it see a known-bad pane.
+
+**Opus 5 on security work, again.** A full security audit on Opus 5 was stopped by the "Model switch" safeguard dialog, exactly as a security-testing seat was on 2026-09-15, and despite the handoff saying to use Sonnet. Security audits, pen tests and exploit reproduction run on Sonnet. The overseer does not answer that dialog: its first option changes a global setting for every session, which is the operator's decision. Dismiss it with Esc (no switch, no setting change), have the seat persist its state to disk by mail, then move the work to a Sonnet seat that resumes from that state.
+
+**EnterWorktree prompts a human.** A verifier seat called Claude Code's built-in EnterWorktree tool, which asks for approval to relocate the session's permission root to a model-supplied path. Nobody answers a seat's pane, so it blocked. The repaired fleet-guard raised PROMPT within seconds - the first time it caught a stall before the operator did. The overseer declined it (Esc; it does not approve permission grants on another agent's behalf). Seats use `treehouse get --lease`, then read the worktree by absolute path and run commands as `cd <worktree> && ...` inside one Bash call; they never call EnterWorktree. Say so in every task that involves a worktree.
+
+**Prompt detection reads the bottom of the pane only.** The first version scanned the whole screen and raised PROMPT when an agent was editing code containing "approve this". A real dialog always renders just above the status line, so fleet-guard now checks the last 16 non-empty lines. Tested against the two real dialogs from 2026-09-16 (Opus model-switch, EnterWorktree) and the false-positive diff: both dialogs still caught, the diff ignored.
+
+**A thinking seat is not an idle seat.** During a long "still thinking" phase Claude Code hides the "esc to interrupt" hint but keeps a present-tense spinner line ("✻ Choreographing… (5m 34s"), so fleet-guard called a busy reviewer IDLE. It now also treats a word ending in "…" followed by an elapsed-time bracket as working; a finished turn reads "Churned for 17s" and is still idle. Tested against both spinner styles and a finished turn.
+
+*Revision: rule 20 added 2026-09-16.*
+
+- 2026-09-17: two workers told "no sub-agents" spawned forks anyway and sat idle waiting on them. `agentmail-launch` now also disallows the `Agent` tool for every non-overseer seat; a seat that genuinely needs sub-agents (e.g. the security-audit skill) sets `"allow_subagents": true` in roster.json.
+
+## 21. One task per seat, and the task id is the test
+
+Ramesh, 2026-09-21: "why are u asing the same subagent to do things? that might cause context problems i guess. please dont do that.. one task to one agent only. make sure of that."
+
+A seat receives exactly ONE task id in its lifetime.
+When that unit is finished, the seat is closed (rule 19's close-when-done), and any further work goes to a freshly launched seat.
+Sending a second task id to a live seat is the violation, and it stays a violation when the seat is idle, when the new work is adjacent to the old, and when relaunching feels wasteful.
+
+**Why this is not merely tidiness.** A seat that has already completed one task carries that task's entire context forward: every file it read, every wrong turn it took, every assumption it formed.
+That context is re-sent on every wake, so it is a standing token cost, and worse it is a correctness risk, because the seat reasons about task B through task A's assumptions and does not know it is doing so.
+A fresh seat reads the new task cold, which is the whole point of dispatching by mail with a self-contained brief.
+
+**What is the same task and is allowed.** A correction ("you got this wrong, redo it"), an unblock ("I built it for you, continue"), a boundary reminder, or a continuation ("now run the AFTER") of the task the seat already holds.
+The test is mechanical: if the work needs a NEW task id, it needs a NEW seat. If it is still the same task id, mail the seat.
+
+**The incident.** On 2026-09-21 the overseer broke this twice in one session.
+`skyzai-security-fix-0919-ramesh` was given `resume-secfix-0921-x9r4` and then, once it reported DONE, `run-secfix-0921-t3m8`.
+`skyzai-apu-device-0921-ramesh` was given `device-0921-r8v2` and then `redfix-0921-m2k9`.
+Both times the second task was sent because the seat was already alive and warm and relaunching looked like overhead.
+That is precisely the reasoning this rule exists to override, and Ramesh caught it from the outside while the overseer did not notice it from the inside.
+
+*Revision: rule 21 added 2026-09-21.*
+
+## 22. Grant the worktree directory, or the seat prompts the human it must never reach
+
+Found 2026-09-23. A Level 3 seat, launched with `--dangerously-skip-permissions` and `--disallowedTools AskUserQuestion`, still put a permission dialog on Ramesh's screen: *"Do you want to make this edit to firebase.json?"*, in a treehouse worktree under `~/.treehouse`.
+
+**Directory access is a separate gate.** `--dangerously-skip-permissions` does not cover it and neither does removing the interactive-question tool, exactly as rule 10's read-block is a separate gate. The seat had no mechanism left except a prompt, and the only thing that can answer one is whoever is looking at the pane. That is the rule 12 stall arriving through a door rule 12 does not watch.
+
+**Why it hid all day.** READS outside the granted directories are fine while `blockReadsOutsideWorkingDirectories` is false. Only the first WRITE trips it. So read-only research seats and seats working in the main checkout were unaffected, and the failure surfaced only when an implementation seat first edited a file inside its own leased worktree.
+
+**The contradiction it exposed.** The standing rule is that seats take isolated treehouse worktrees rather than sharing a checkout ([[treehouse-not-raw-worktree]]). But `agentmail-launch` granted `--add-dir` for the org root and the mail root only, and treehouse worktrees live under `~/.treehouse`, OUTSIDE both. Every seat sent to a worktree was one edit away from prompting the operator.
+
+**Fixed at the launcher**, not per seat: `agentmail-launch` now adds `--add-dir <TREEHOUSE_ROOT or ~/.treehouse>` for every Claude child when that directory exists, with the reasoning in a comment so it is not tidied away later.
+
+**The recovery, when a seat is found blocked on a prompt.** Do NOT answer it; the overseer does not approve permission grants on another agent's behalf (rule 20). Press Esc, terminate the exact runner, revert any stray edit, return the worktree to the pool, fix the cause, then relaunch and re-send the task mail. Restarting the same seat for the same task id is not a rule 21 violation.
+
+**The check that would have caught it:** launch one seat and have it EDIT a file in its worktree before trusting the fleet. A seat that reads successfully proves nothing about whether it can write.
+
+*Revision: rule 22 added 2026-09-23.*
+
+## 23. When the overseer's runtime runs out, hand the seat to the other runtime at once
+
+Ramesh, 2026-10-07: "claude stopped saying it hit the limit, but I HAVE CODEX fully functional, u were supposed to track that and start codex main agent with necessary prompt".
+On 2026-10-07 the Claude overseer hit its usage limit mid-build with four work packages in flight.
+It wrote a handoff and stopped; the Claude seats stalled with it, and nothing moved for over two hours while the Codex budget sat at 99% unused.
+That is the waste rule 19 exists to prevent, applied to the overseer seat itself.
+
+- Track your own runtime. Run `agentmail/bin/fleet-usage` at session start, before each dispatch batch and at least hourly during long runs. At 80% of the 5-hour session window or 90% of the weekly limit, prepare the handover; do not wait for the hard stop.
+- On the first usage-limit warning (or at the threshold), in this order: write `conversation-context/NEXT_MAIN_AGENT_HANDOFF_<date>.md` (what is merged, every in-flight seat with branch/SHA/brief path, the next action for each, open decisions, deploy-day items); then start the Codex overseer by EXECUTING `agentmail/bin/overseer-codex.command` in a visible terminal Ramesh watches (rule 13); it runs with on-request approvals so Ramesh can approve the host operations (tmux, ps, git) a supervisor needs - never "never" for the overseer; then tell Ramesh in one line that the seat moved to Codex and where.
+- The incoming Codex overseer reads that handoff, re-arms its mail check, relaunches stalled Claude seats' tasks on Codex where they fit (rule 19 task fit; Flutter-on-host work may have to wait for the Claude reset), and keeps the fleet moving.
+- The reverse holds too: a Codex overseer near its limit hands back to Claude the same way.
+- Only one overseer acts at a time. The outgoing overseer stops dispatching once the handoff is written; if it is still alive after its limit resets, it reads the newer handoff and asks Ramesh which seat continues before acting.
+
+## 24. Never scan the whole disk or home folder
+
+No `find /`, `find ~`, `find /Users/...`, `grep -r` or `du` over `/` or `~`, by the overseer or any seat (Claude or Codex). On macOS a whole-disk walk triggers one privacy dialog per protected folder (Photos, Contacts, Documents, Downloads, ...) on Ramesh's screen. Search only the repo, your treehouse worktree, or `.agent-mail/attachments/<topic>/`. Seats write every artifact (screenshots, logs) under `.agent-mail/attachments/<topic>/` and quote the absolute path in DONE. Claude sessions are also hard-blocked by deny rules in `~/.claude/settings.json`.
+
+*Revision: rule 24 added 2026-10-09.*
+
+## 25. Every agent that drives a device keeps the shared screen map
+
+Ramesh, 2026-10-12: whenever an agent accesses the phone, it records the screens, elements, taps and navigation it sees into a shared map, so the next agent navigates from the map instead of rediscovering it.
+The maps live in `/Users/darkness/Work/Aureus/device-maps/` (one file per app, e.g. `skyzai-app.md`); the file's header defines the format.
+Read the map before navigating. Record each screen you actually see, where each tap led, and any trap that broke a run.
+The map grows only by normal use: never tap around just to fill it.
+The overseer puts this rule in every brief that touches a device.
+
+*Revision: rule 25 added 2026-10-12.*

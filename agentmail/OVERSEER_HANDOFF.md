@@ -63,8 +63,25 @@ seat confident, wrong facts.
 3. Boot the new seat with: **"You are overseer-ramesh. Read
    `agentmail/OVERSEER_HANDOFF.md` in full, then `agentmail/OPERATIONAL_RULES.md`
    rules 9–15, then check your mail."**
-4. Codex specifics: `--sandbox workspace-write --ask-for-approval never`; it
+4. Codex specifics: `--sandbox workspace-write --ask-for-approval on-request` for the interactive supervisor; verify effective host capabilities using `SUPERVISOR_BOOTSTRAP.md`; it
    reads `~/.codex/AGENTS.md` and repo `AGENTS.md` automatically.
+
+### Required closeout: the incoming overseer ends the outgoing overseer
+
+**Standing instruction from Ramesh, 2026-09-12:** the new main agent is responsible for ending the previous main agent after taking over.
+Starting the replacement or stopping the old mail watcher alone does not complete the handoff.
+
+1. Preserve the outgoing seat's durable state and confirm the incoming seat has read it and can receive mail.
+2. Identify the outgoing main session and its exact process or job identity separately from its watcher, the new overseer, and all child seats.
+3. Terminate the outgoing main session using an authorized control available to the incoming agent, preferring graceful shutdown.
+4. Close the terminal window or tab that belonged exclusively to the outgoing main session, if one exists.
+   Preserve shared windows, child panes, the terminal application itself, and the incoming session.
+5. Verify that the outgoing main process has exited and its dedicated window or tab is closed; record the evidence in Live state.
+   Silence, a goodbye message, or a released watcher lock does not prove the main process exited.
+
+This cleanup is part of the authorized handoff and requires no repeated permission request.
+If the runtime blocks the required operation, record the exact blocker and leave closeout explicitly incomplete; do not bypass the restriction through another agent or tool.
+Do not report a window absent solely because an older handoff called the session a background job.
 
 **Budget asymmetry is the reason to switch.** As of 2026-09-12 Claude sat at 79%
 of the weekly limit consumed while Codex was at ~100% remaining. Children were
@@ -73,97 +90,30 @@ consumer, and its cost is dominated by long context (88% of usage was at >150k).
 
 ---
 
-## 5. Live state — UPDATE THIS
+## 5. Current handoff - 2026-09-12
 
-## Codex takeover update - 2026-09-12 11:57 UTC
+SUPERSEDED 2026-10-01: read conversation-context/NEXT_MAIN_AGENT_HANDOFF_20261001.md (authoritative) and boot with conversation-context/NEW_MAIN_AGENT_PROMPT_20261001.md.
+SUPERSEDED AGAIN 2026-09-14: read conversation-context/NEXT_MAIN_AGENT_HANDOFF_20260914.md (Circle paused; release 20260914 reviewed but not deployed; seats in one tmux grid; no background subagents).
+SUPERSEDED 2026-09-13: Ramesh requested Claude main takeover.
+Read conversation-context/CLAUDE_MAIN_HANDOFF.md and CLAUDE_TAKEOVER_STATUS.md for the current authoritative state.
+Routing39b78f0b is already deployed manually, frontend repaired, WH536847 completed and KG is retrying artifact_persistence.
+The September12 descriptions below are historical and must not trigger a repeated launch, implementation or deployment.
 
-Ramesh directly transferred the overseer seat to Codex/gpt-6-astra in this session.
-This update supersedes older live-state claims below; historical project instructions are not renewed production authorization.
-The full OVERSEER_HANDOFF.md, OPERATIONAL_RULES.md, global guidelines and conversation-context handoff were read.
-Eleven unread messages were drained and reconciled; no legacy .agent-mail/overseer-ramesh-inbox.md exists.
-Local Circle HEAD is 27216044; the local origin/main reference is 3128172d29edc50c54348e9238e42f8b04af13ea.
-Production at eef72827 is inherited handoff evidence, not freshly verified; no successful 3128172d deploy receipt was found in the drained mail.
-The 20-commit deploy packet remains .agent-mail/attachments/DEPLOY_BLOCK_glm.md, for Ramesh's manual VM session.
-27216044 remains blocked by review: Ollama plain 429 refusal and monitor balance-exhaustion cooldown/reactivation.
-Circle was tasked to reproduce and repair within the existing scope, submit monitor state/migration/recovery design before that implementation, and keep the discovery-guard correction separate.
-Reviewer was asked to confirm readiness and resolve its missing pytest/cryptography environment before behavioral verification.
-Requests: c8c6a51f-96e0-421d-8e1a-541f079a706c and 7e0bfe36-0c91-4660-82fc-85c048d3609a; acknowledgements and ETAs pending.
-No new product implementation or production actions were performed by the overseer.
+Ramesh is preparing to launch a new Codex main agent himself.
+Read [SUPERVISOR_BOOTSTRAP.md](SUPERVISOR_BOOTSTRAP.md) for the launch command and required capability checks.
+The ready-to-use context entry point is [NEW_MAIN_AGENT_PROMPT.md](../conversation-context/NEW_MAIN_AGENT_PROMPT.md).
+The authoritative live state is [CURRENT_STATE.md](../conversation-context/CURRENT_STATE.md), with ordered work in [NEXT_STEPS.md](../conversation-context/NEXT_STEPS.md).
+Older contradictory snapshots are preserved in conversation-context/archive/2026-09-12-before-supervisor-bootstrap/OVERSEER_HANDOFF.md and must not be treated as current authorization.
 
-Watcher takeover is INCOMPLETE.
-mail-watch refused a duplicate because the kernel watch-overseer-ramesh lock is held; lsof identified Python PID 20453.
-Stopping PID 20453 was denied by this sandbox (operation not permitted); process enumeration and tmux socket inspection are also denied.
-Do not claim this session is receiving persistent mail notifications or that the fleet is visible/live based on old handoff claims.
-Continue direct mail-read at every turn; the operator must stop the old watcher outside the sandbox before this session can arm the canonical watcher.
+The outgoing Codex session can send AgentMail but cannot access host tmux/process controls; its effective approval policy is never.
+No visible replacement fleet was launched; internal managed workers finished diagnosis tasks and were rejected by Ramesh as a visibility substitute.
+The next supervisor must verify host capabilities and ownership before accepting the seat or ending the outgoing main.
 
+Circle at 3128172d is confirmed deployed from Ramesh's receipts.
+No new publication fix exists yet.
+Task fe09cf3d-574c-4201-b50f-3626ff569b19 asks circle-ramesh to implement withholding news until WH, locations and KG are successfully saved; delivery is confirmed, acknowledgement is pending.
+The separate enrichment budget gate is confirmed; no cap increase or production changes are authorized.
 
-**As of 2026-09-12 ~18:05 (Asia/Katmandu). THIS IS A LIVE HANDOFF —** Ramesh moved
-the overseer seat to **Codex / gpt-6-astra** to preserve the Claude remainder
-(79% of the week already spent, resets Sep 13 21:45). The outgoing Claude/Opus-5
-session has gone quiet and is no longer acking mail; **you are the overseer now.**
-Only you talk to Ramesh.
-
-**First three things to do:** (1) arm your mail watcher, (2) read
-`agentmail/OPERATIONAL_RULES.md` rules 9–15, (3) read the *In flight* list below —
-there is a BLOCKED commit and an undeployed 20-commit set waiting on Ramesh.
-
-**Where everything runs** (verified 2026-09-12, `agentmail/bin/whereami`):
-- **Ramesh is in iTerm2.** That is the window he types into.
-- **The fleet is in macOS Terminal.app** — tmux session `circle`, both child seats
-  as side-by-side panes in the `agents` window. He must be able to SEE every seat;
-  a detached session is not "running" (rule 13).
-- **You (this overseer) run in iTerm2**, launched with
-  `open -a iTerm agentmail/bin/overseer-astra.command`.
-  **PLACEMENT RULE (Ramesh, 2026-09-12):** *"the main agent should be open
-  wherever the fuck u are and not other app."* The overseer opens in **the
-  terminal Ramesh himself is using** (iTerm2) — he drives it directly. **Child
-  seats go in Terminal.app** (tmux `circle`), which he only watches. Putting the
-  main agent in the children's window makes him go hunting for the one seat he
-  actually talks to.
-- The outgoing Claude overseer was a **background job** in the ClaudeCode daemon,
-  attached to no window — which is why he could not see it.
-
-### Fleet
-| seat | runtime | model | state |
-|---|---|---|---|
-| `circle-ramesh` | codex-cli | gpt-5.6-terra | live |
-| `circle-review-ramesh` | codex-cli | gpt-5.6-terra | live |
-| overseer | Codex | gpt-6-astra | current user-facing session; watcher takeover blocked by sandbox |
-
-Both children are panes in the `agents` window of tmux session `circle`.
-
-### Budgets
-- **Claude:** 79% of week used, resets **Sep 13 21:45**. +50% promo through Sep 13.
-- **Codex:** ~100% of week left, resets **Sep 19 17:09**. Pro Lite.
-
-### Shipped and live in production
-Production is at **`eef72827`**. This morning's enrichment recovery (retry/backoff
-+ the cooldown fix) is live: tasks are **parked instead of destroyed**.
-
-### Ready but NOT deployed — the open item
-`origin/main` = **`3128172d`**; `eef72827..origin/main` = **20 commits**, reviewed
-SHIPPABLE. Deploy block for Ramesh:
-`.agent-mail/attachments/DEPLOY_BLOCK_glm.md`. Contains Yves' brand mark
-(undeployed), Material Symbols, GLM in four provider pickers, key-pool
-correctness. **It does NOT improve extraction throughput** and the 841
-`groq_model` errors are historical (`63f1a015` predates `eef72827`) — do not
-promise a recovery it cannot deliver.
-
-### In flight
-- **`27216044`** (429/balance classifier) — committed, **BLOCKED by review**,
-  two verified defects:
-  1. `market_monitor_keys` CHECK (`schema.sql:723`) has **no `exhausted` state** —
-     a balance-dead key is marked `rate_limited`, cools down, returns to `active`
-     and burns calls forever. Needs a state + migration. (Verified by the overseer
-     against the schema, not taken on trust.)
-  2. `_validate_ollama` rejects **every** non-200, so a plain 429 throttle
-     terminally refuses a good donation.
-- **Discovery guard reads comments as code** — commenting GLM out of the intel
-  picker still passes. Also `filter` was dropped from the regex.
-- **GLM key**: donated locally, `active`, uncapped, adapter resolves — but the
-  BigModel **account has no balance** (`429 code 1113`). Ramesh must fund it;
-  nothing to fix in code. It is in the LOCAL database only, never prod.
-
-### Owed to Ramesh
-- Run the deploy (his hands, VM).
-- Fund BigModel if he wants GLM live.
+Executable launchers remain unchanged.
+Do not use overseer-astra.command unchanged because it selects never, or fleet-start.command unchanged because it kills the session and supplies a Codex-rejected flag.
+The documentation update records requirements and observed defects; it does not grant OS access or claim launcher repair/council approval.
