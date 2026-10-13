@@ -8,7 +8,14 @@ both. Research/attachments do not authorize implementation or agent spawning.
 Routine actions within existing delegation need no extra approval ceremony.
 
 How to run a fleet of AI coding agents so that **the user talks to exactly
-one agent** and everything else happens autonomously, safely, out of sight.
+one agent** and children work autonomously while remaining visible in the terminal layout the operator requested.
+
+## Supervisor startup
+
+Use [SUPERVISOR_BOOTSTRAP.md](SUPERVISOR_BOOTSTRAP.md) for the current main-agent launch and capability checks.
+The supervisor needs a supported approval path for host management; unattended child settings must not be reused blindly for the parent.
+Visible terminal identity, process control and an AgentMail round trip are acceptance evidence, not implied capabilities.
+The current Ramesh site requires separate visible Terminal.app child windows and the main in his own terminal application.
 
 ## 1. Roles
 
@@ -150,18 +157,14 @@ migration and why" is answerable with `grep`, forever.
 
 ## 6. Spawning children
 
-Two patterns, both compatible with the protocol:
+At Ramesh's site, use mail-native roster seats through agentmail-run in project-named tmux sessions, with separate visible Terminal.app windows.
+The supervisor must establish its host-control capabilities first and validate each child's runtime arguments.
+Internal managed subagents and headless processes are not substitutes for the requested visible fleet.
+The generic protocol can carry mail for other execution patterns, but using another pattern here requires Ramesh's instruction.
 
-- **Persistent sessions** — a long-lived interactive session per repo
-  (a terminal tab per project). The human starts them; the parent reaches
-  them purely by mail + their inbox watchers.
-- **On-demand headless** — the parent (or a cron/hook) launches
-  `claude -p "<bootstrap prompt>" --permission-mode bypassPermissions` in
-  the target repo when a `task` lands, pointing it at its inbox. Dies when
-  done; the mailbox carries anything that arrived meanwhile.
-
-Bootstrap prompt for a child, minimally: agent-id, repo path, "drain your
-inbox first", the deny-rules reminder, and "report only by mail".
+Bootstrap every child with its seat ID, checkout, mail root, watcher-first instruction, task lookup and escalation boundaries.
+Require a task acknowledgement before reporting active implementation.
+See OPERATIONAL_RULES.md rules 9-17 for launch, visibility and ownership verification.
 
 ## 7. The council pattern — cross-model deliberation
 
