@@ -306,7 +306,10 @@ def build_command(seat: dict, mail_root: str) -> str:
         if seat.get("model"):
             parts += ["--model", seat["model"]]
         if seat.get("_skip_permissions") and not parent:
-            parts.append("--dangerously-skip-permissions")
+            # Ramesh's settings disable bypass mode, so --dangerously-skip-permissions
+            # alone left children stuck on approval prompts nobody watches (2026-10-17).
+            # Auto mode lets the classifier approve safe actions and block risky ones.
+            parts += ["--permission-mode", "auto"]
         if not parent:
             # A child talks to NO human — decisions escalate to the overseer by mail.
             # Remove the interactive-question tool so a child physically cannot prompt
