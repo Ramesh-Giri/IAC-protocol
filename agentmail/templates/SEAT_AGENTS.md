@@ -66,3 +66,8 @@ before acting. Messages have a `type:` — `proposal` asks for your verdict
   real function names, how it is implemented, how verified, deploy impact).
   Do not edit Part 2; it is generated from git. `change-report --check <file>`
   must print `complete`. Reviewers check the report against the diff.
+- **Document files you touch (OPERATIONAL_RULES rule 28).** A source file you
+  edit that has no header doc comment gets one in the same change: line 1 says
+  what the file is for, then main classes/functions, dependencies, users and
+  side effects. Keep existing headers true when behaviour changes. Never add
+  headers in bulk to files you did not otherwise change.
