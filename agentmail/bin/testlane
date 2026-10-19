@@ -5,6 +5,7 @@ Seats use snapshot()/client() without writing their index or object store.
 runner() schedules worker processes; Lane resets, patches, warms and compiles tests.
 Uses Python stdlib, git and locally installed Flutter/Node tools, plus queue files.
 Writes only the queue and its dedicated worktrees (runner also registers worktrees).
+Runner-owned TypeScript invocations pin emission paths and reject output symlinks.
 The argv allowlist is a command boundary; repository test code must be trusted.
 See ../OPERATIONAL_RULES.md rule 29 and ../templates/SEAT_AGENTS.md.
 """
@@ -261,14 +262,14 @@ def snapshot(repo, base, scratch):
     return base, patch
 
 
-def run_process(argv, cwd, log, timeout, install=False):
+def run_process(argv, cwd, log, timeout, install=False, output=None):
     """Bound the whole process group, including children on timeout or completion."""
     log.write(("\n$ " + json.dumps(argv) + "\n").encode())
     log.flush()
     if timeout <= 0:
         log.write(b"timeout: command budget exhausted\n")
         return 124
-    p = subprocess.Popen(argv, cwd=cwd, stdout=log, stderr=subprocess.STDOUT,
+    p = subprocess.Popen(argv, cwd=cwd, stdout=log if output is None else output, stderr=subprocess.STDOUT,
                          env=environment(install), start_new_session=True,
                          pass_fds=() if LANE_LOCK is None else (LANE_LOCK,))
     try:
@@ -369,6 +370,61 @@ class Lane:
                     raise Error("patch may not introduce symlinks or submodules")
         git(self.path, "apply", "--binary", "--whitespace=nowarn", "-", data=patch)
 
+    def compile_typescript(self, config, log, deadline):
+        """Resolve config without emitting, then constrain every compiler output channel."""
+        work = safe_path(self.path, "functions")
+        source = safe_path(work, config)
+        compiler = safe_path(work, "node_modules/typescript/bin/tsc")
+        name = ".test-build" if source.name == "tsconfig.test.json" else "lib"
+        output = safe_path(work, name, must_exist=False)
+        allowed = self.path.resolve() / "functions" / name
+        if output.resolve() != allowed:
+            raise Error("compiler output must stay inside the lane's allowed output directory")
+        if output.exists() and not output.is_dir():
+            raise Error("compiler output path must be a directory")
+        # Warm output trees can contain links planted by an earlier trusted command.
+        for entry in output.rglob("*"):
+            safe_path(output, str(entry.relative_to(output)))
+            if not entry.resolve().is_relative_to(allowed):
+                raise Error("compiler output path escapes the allowed output directory")
+            info = entry.stat()
+            if not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode)) or (
+                    stat.S_ISREG(info.st_mode) and info.st_nlink != 1):
+                raise Error("compiler output must contain only directories and regular files with one hard link")
+        build_info = safe_path(output, hashlib.sha256(config.encode()).hexdigest() + ".tsbuildinfo",
+                               must_exist=False)
+        if not build_info.resolve().is_relative_to(allowed):
+            raise Error("compiler build-info path escapes the allowed output directory")
+        # Cached incremental state must not skip re-emitting a deleted generated target.
+        if name == ".test-build":
+            build_info.unlink(missing_ok=True)
+        argv = [executable("node", self.path), str(compiler), "-p", str(source),
+                "--outDir", str(output), "--rootDir", str(work),
+                "--tsBuildInfoFile", str(build_info), "--noEmitOnError", "true"]
+        # TypeScript resolves JSONC, package configs and extends chains without emitting.
+        with tempfile.TemporaryFile(dir=self.queue / "tmp") as resolved:
+            code = run_process([*argv, "--showConfig"], work, log,
+                               deadline - time.monotonic(), output=resolved)
+            resolved.seek(0)
+            data = resolved.read(MAX_JOB + 1)
+        if len(data) > MAX_JOB:
+            raise Error("resolved TypeScript config exceeds the job size limit")
+        if code:
+            log.write(data)
+            return code
+        try:
+            options = json.loads(data)["compilerOptions"]
+            if not isinstance(options, dict):
+                raise ValueError("compilerOptions must be an object")
+        except (ValueError, KeyError, TypeError) as exc:
+            raise Error("installed tsc did not return a valid --showConfig result") from exc
+        for option in ("outFile", "generateTrace", "generateCpuProfile"):
+            if options.get(option):
+                raise Error(f"tsc {option} is not supported in warm lanes; remove it from the config")
+        if options.get("declaration") or options.get("composite") or options.get("declarationDir"):
+            argv.extend(("--declarationDir", str(output)))
+        return run_process(argv, work, log, deadline - time.monotonic())
+
     def execute(self, job):
         started = time.monotonic()
         logfile = self.queue / "logs" / f"{job['id']}-{job.get('attempt', 0)}-{uuid.uuid4().hex}.log"
@@ -388,22 +444,17 @@ class Lane:
                 if argv[:2] == ["node", "--test"]:
                     outputs = [name for name in argv[2:] if generated_test(name, job["cwd"])]
                     if outputs:
-                        safe_path(self.path, "functions/tsconfig.test.json")
-                        compiler = safe_path(self.path, "functions/node_modules/typescript/bin/tsc")
                         # Force requested tests to be emitted by this patch, not left in a warm cache.
                         for name in outputs:
                             safe_path(self.path / job["cwd"], name, must_exist=False).unlink(missing_ok=True)
-                        code = run_process([executable("node", self.path), str(compiler),
-                                            "-p", "tsconfig.test.json"], self.path / "functions",
-                                           log, deadline - time.monotonic())
+                        code = self.compile_typescript("tsconfig.test.json", log, deadline)
                 if argv[:2] == ["flutter", "test"] and not any(a.startswith("--concurrency") for a in argv):
                     argv.append("--concurrency=1")
                 if argv[:2] == ["flutter", "analyze"] and "--no-pub" not in argv:
                     argv.insert(2, "--no-pub")
                 if argv[:2] == ["npx", "tsc"]:
-                    compiler = safe_path(self.path, "functions/node_modules/typescript/bin/tsc")
-                    argv = ["node", str(compiler), *argv[2:]]
-                if code == 0:
+                    code = self.compile_typescript(argv[3], log, deadline)
+                if code == 0 and argv[:2] != ["npx", "tsc"]:
                     validate_command(job["argv"], job["cwd"], self.path)
                     argv[0] = executable(argv[0], self.path)
                     code = run_process(argv, self.path / job["cwd"], log, deadline - time.monotonic())

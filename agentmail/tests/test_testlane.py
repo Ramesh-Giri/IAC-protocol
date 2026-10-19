@@ -1,6 +1,8 @@
 """Exercise testlane's CLI, command boundary and crash recovery using temporary repos.
 
-TestlaneTest uses only fake installed Flutter/Node commands and stdlib unittest.
+TestlaneTest uses fake installed Flutter/Node commands and stdlib unittest.
+Its compiler fixture resolves inherited config and CLI output paths to exercise
+the same write boundary as TypeScript, including declarations and build info.
 It creates disposable git histories, queues, lane workers and logs; no real SDK,
 product checkout, network, live seat or treehouse pool is used or modified.
 """
@@ -9,6 +11,7 @@ from importlib.machinery import SourceFileLoader
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -41,16 +44,67 @@ elif tool=='npm' and sys.argv[1:]==['ci']:
  compiler=cwd/'node_modules/typescript/bin/tsc'
  compiler.parent.mkdir(parents=True,exist_ok=True)
  compiler.write_text('local compiler fixture\n')
+ behavior=json.loads((root/'behavior.json').read_text())
+ if behavior.get('symlink_output'):
+  link=cwd/behavior['symlink_output']
+  link.parent.mkdir(parents=True,exist_ok=True)
+  link.symlink_to(behavior['symlink_target'])
 else:
  behavior=json.loads((root/'behavior.json').read_text())
  if tool=='node' and 'node_modules/typescript/bin/tsc' in sys.argv[1]:
-  if sys.argv[-1]=='tsconfig.test.json':
-   source=cwd/'test/generated.test.ts'
-   output=cwd/'.test-build/test/generated.test.js'
-   if source.exists():
-    output.parent.mkdir(parents=True,exist_ok=True)
-    output.write_text(source.read_text())
-   time.sleep(behavior.get('compile_sleep',0))
+  path_options={'outDir','rootDir','declarationDir','tsBuildInfoFile','outFile',
+                'generateTrace','generateCpuProfile'}
+  def config_options(path):
+   config=json.loads(path.read_text())
+   options={}
+   bases=config.get('extends',[])
+   for base in [bases] if isinstance(bases,str) else bases:
+    options.update(config_options(path.parent/base))
+   for key,value in config.get('compilerOptions',{}).items():
+    options[key]=str((path.parent/value).resolve()) if key in path_options and value else value
+   return options
+  args=sys.argv[2:]
+  config=cwd/args[args.index('-p')+1]
+  options=config_options(config)
+  for i,arg in enumerate(args):
+   if arg.startswith('--') and arg!='--showConfig':
+    value=args[i+1]
+    options[arg[2:]]=value=='true' if value in ('true','false') else value
+  if '--showConfig' in args:
+   time.sleep(behavior.get('config_sleep',0))
+   if behavior.get('config_exit'):
+    print('fixture config resolution failed')
+    record('end')
+    sys.exit(behavior['config_exit'])
+   print(json.dumps({'compilerOptions':options}))
+   record('end')
+   sys.exit(0)
+  def emit(path,data):
+   path.parent.mkdir(parents=True,exist_ok=True)
+   path.write_text(data)
+  source=cwd/'test/generated.test.ts'
+  output_dir=Path(options.get('outDir',str(cwd/'.test-build')))
+  root_dir=Path(options.get('rootDir',str(cwd)))
+  relative=Path(os.path.relpath(source,root_dir))
+  incremental=options.get('incremental') or options.get('composite')
+  build_info=Path(options.get('tsBuildInfoFile',str(output_dir/'compile.tsbuildinfo')))
+  signature=hashlib.sha256((source.read_bytes() if source.exists() else b'')+
+                           json.dumps(options,sort_keys=True).encode()).hexdigest()
+  if incremental and build_info.exists() and build_info.read_text()==signature:
+   record('end')
+   sys.exit(behavior.get('compile_exit',0))
+  if source.exists():
+   output=Path(options['outFile']) if options.get('outFile') else output_dir/relative.with_suffix('.js')
+   emit(output,source.read_text())
+   if options.get('declaration') or options.get('composite'):
+    emit(Path(options.get('declarationDir',str(output_dir)))/relative.with_suffix('.d.ts'),'declaration')
+  if incremental:
+   emit(build_info,signature)
+  if options.get('generateTrace'):
+   emit(Path(options['generateTrace'])/'trace.json','trace')
+  if options.get('generateCpuProfile'):
+   emit(Path(options['generateCpuProfile']),'profile')
+  time.sleep(behavior.get('compile_sleep',0))
   record('end')
   sys.exit(behavior.get('compile_exit',0))
  if behavior.get('expect_compiled'):
@@ -104,7 +158,9 @@ class TestlaneTest(unittest.TestCase):
                  "pubspec.yaml": "name: fixture\n", "pubspec.lock": "fixture lock\n",
                  "functions/package.json": '{"name":"fixture","version":"1.0.0"}',
                  "functions/package-lock.json": '{"lockfileVersion":3}',
-                 "functions/tsconfig.json": "{}", "functions/tsconfig.test.json": "{}",
+                 "functions/tsconfig.json": '{"compilerOptions":{"rootDir":".","outDir":"lib"}}',
+                 "functions/tsconfig.test.json": '{"extends":"./tsconfig.json",'
+                                                 '"compilerOptions":{"outDir":".test-build"}}',
                  "functions/test/generated.test.ts": "compiled fixture base\n",
                  "tool/analyzer_gate.py": "print('gate')\n",
                  "test/example_test.dart": "// fixture\n",
@@ -452,6 +508,160 @@ class TestlaneTest(unittest.TestCase):
         self.assertFalse(any(e["tool"] == "npx" for e in self.trace()))
         self.assertTrue(any(e["tool"] == "node" and "node_modules/typescript/bin/tsc" in e["argv"][0]
                             for e in self.trace()))
+
+    def compiler_job(self, generated):
+        argv = (["node", "--test", ".test-build/test/generated.test.js"] if generated else
+                ["npx", "tsc", "-p", "tsconfig.json"])
+        job = self.job(argv=argv)
+        job["cwd"] = "functions"
+        return job
+
+    def check_compiler_containment(self, options, inherited=False):
+        self.start()
+        outside = self.root / "outside"
+        outside.mkdir()
+        (outside / "keep").write_text("untouched")
+        config = {"compilerOptions": options}
+        if inherited:
+            bases = self.repo / "functions/config"
+            bases.mkdir()
+            (bases / "base.json").write_text(json.dumps(config))
+            (bases / "middle.json").write_text('{"extends":"./base.json"}')
+            config = {"extends": "./config/middle.json"}
+        for generated in (False, True):
+            with self.subTest(generated=generated):
+                name = "tsconfig.test.json" if generated else "tsconfig.json"
+                (self.repo / "functions" / name).write_text(json.dumps(config))
+                before = len(self.trace())
+                result = self.result(self.submit(self.compiler_job(generated)))
+                self.assertEqual(result["exit_code"], 0, result)
+                self.assertEqual({str(p.relative_to(outside)): p.read_text()
+                                  for p in outside.rglob("*") if p.is_file()}, {"keep": "untouched"})
+                work = (self.queue / "lanes/0/functions").resolve()
+                expected_output = work / (".test-build" if generated else "lib")
+                self.assertTrue((expected_output / "test/generated.test.js").exists())
+                calls = [e["argv"] for e in self.trace()[before:] if e["tool"] == "node" and
+                         e["phase"] == "start" and "node_modules/typescript/bin/tsc" in e["argv"][0]
+                         and "--showConfig" not in e["argv"]]
+                self.assertTrue(calls)
+                for args in calls:
+                    self.assertEqual(Path(args[args.index("--rootDir") + 1]), work)
+                    output = Path(args[args.index("--outDir") + 1])
+                    self.assertEqual(output, expected_output)
+                    self.assertTrue(Path(args[args.index("--tsBuildInfoFile") + 1]).is_relative_to(output))
+
+    def test_compiler_relative_outdir_cannot_escape(self):
+        self.check_compiler_containment({"rootDir": ".", "outDir": "../../../../outside"})
+
+    def test_compiler_absolute_outdir_cannot_escape(self):
+        self.check_compiler_containment({"rootDir": ".", "outDir": str(self.root / "outside")})
+
+    def test_compiler_extends_chain_cannot_redirect_outputs(self):
+        self.check_compiler_containment({"rootDir": "../../..", "outDir": str(self.root / "outside")},
+                                        inherited=True)
+
+    def test_compiler_rootdir_is_pinned(self):
+        self.check_compiler_containment({"rootDir": "../../..", "outDir": ".test-build"})
+
+    def test_compiler_declaration_dir_cannot_escape(self):
+        self.check_compiler_containment({"rootDir": ".", "outDir": ".test-build", "declaration": True,
+                                        "declarationDir": str(self.root / "outside/types")})
+
+    def test_compiler_build_info_cannot_escape(self):
+        self.check_compiler_containment({"rootDir": ".", "outDir": ".test-build", "incremental": True,
+                                        "tsBuildInfoFile": str(self.root / "outside/build.tsbuildinfo")})
+
+    def test_compiler_rejects_symlinked_output_trees(self):
+        self.start()
+        outside = self.root / "outside"
+        outside.mkdir()
+        (outside / "keep").write_text("untouched")
+        for generated in (False, True):
+            output = self.queue / "lanes/0/functions" / (".test-build" if generated else "lib")
+            for name in ("", "unused", "unrequested.js"):
+                with self.subTest(generated=generated, name=name):
+                    if output.exists():
+                        shutil.rmtree(output)
+                    link = output / name if name else output
+                    self.behavior(symlink_output=str(link.relative_to(output.parent)),
+                                  symlink_target=str(outside / "keep" if name.endswith(".js") else outside))
+                    (self.repo / "functions/package-lock.json").write_text(json.dumps({"change": [generated, name]}))
+                    try:
+                        result = self.result(self.submit(self.compiler_job(generated)))
+                        self.assertEqual(result["status"], "rejected", result)
+                        self.assertIn("symlink", result["error"])
+                        self.assertEqual((outside / "keep").read_text(), "untouched")
+                    finally:
+                        if link.is_symlink():
+                            link.unlink()
+        self.assertFalse(any(e["tool"] == "node" for e in self.trace()))
+
+    def test_compiler_rejects_other_configured_output_paths(self):
+        self.start()
+        outside = self.root / "outside"
+        outside.mkdir()
+        for option in ("outFile", "generateTrace", "generateCpuProfile"):
+            for generated in (False, True):
+                with self.subTest(option=option, generated=generated):
+                    name = "tsconfig.test.json" if generated else "tsconfig.json"
+                    (self.repo / "functions" / name).write_text(json.dumps({"compilerOptions": {
+                        "rootDir": ".", "outDir": ".test-build", option: str(outside / option)}}))
+                    result = self.result(self.submit(self.compiler_job(generated)))
+                    self.assertEqual(result["status"], "rejected", result)
+                    self.assertIn(option, result["error"])
+                    self.assertFalse(list(outside.iterdir()))
+
+    def test_compiler_rejects_hardlinked_output_files(self):
+        self.start()
+        outside = self.root / "keep"
+        outside.write_text("untouched")
+        for generated in (False, True):
+            with self.subTest(generated=generated):
+                directory = ".test-build" if generated else "lib"
+                output = self.queue / "lanes/0/functions" / directory / "unrequested.js"
+                output.parent.mkdir(parents=True)
+                os.link(outside, output)
+                try:
+                    result = self.result(self.submit(self.compiler_job(generated)))
+                    self.assertEqual(result["status"], "rejected", result)
+                    self.assertIn("hard link", result["error"])
+                    self.assertEqual(outside.read_text(), "untouched")
+                finally:
+                    output.unlink(missing_ok=True)
+        self.assertFalse(any(e["tool"] == "node" for e in self.trace()))
+
+    def test_compiler_config_resolution_failure_and_timeout_skip_emission(self):
+        self.start()
+        for behavior, expected in (({"config_exit": 17}, 17), ({"config_sleep": 2}, 124)):
+            self.behavior(**behavior)
+            for generated in (False, True):
+                with self.subTest(behavior=behavior, generated=generated):
+                    job = self.compiler_job(generated)
+                    job["timeout"] = 5 if expected == 17 else 0.5
+                    result = self.result(self.submit(job))
+                    self.assertEqual(result["exit_code"], expected, result)
+                    log = (self.queue / result["log_path"]).read_text()
+                    self.assertNotIn('"--test"', log)
+                    if expected == 17:
+                        self.assertIn("fixture config resolution failed", log)
+        self.assertTrue(all("--showConfig" in e["argv"] for e in self.trace() if e["tool"] == "node"))
+
+    def test_generated_incremental_compile_reemits_missing_targets(self):
+        self.start()
+        (self.repo / "functions/tsconfig.test.json").write_text(json.dumps({"compilerOptions": {
+            "rootDir": ".", "outDir": ".test-build", "incremental": True}}))
+        for attempt in range(2):
+            with self.subTest(attempt=attempt):
+                result = self.result(self.submit(self.compiler_job(True)))
+                self.assertEqual(result["exit_code"], 0, result)
+                self.assertTrue((self.queue / "lanes/0/functions/.test-build/test/generated.test.js").exists())
+
+    def test_compiler_output_cli_overrides_are_rejected(self):
+        for option in ("outDir", "rootDir", "declarationDir", "tsBuildInfoFile", "outFile",
+                       "generateTrace", "generateCpuProfile", "build"):
+            with self.subTest(option=option), self.assertRaises(tl.Error):
+                tl.validate_command(["npx", "tsc", "-p", "tsconfig.json", "--" + option,
+                                     str(self.root / "outside")], "functions", self.repo)
 
     def test_second_runner_rejected(self):
         self.start()
