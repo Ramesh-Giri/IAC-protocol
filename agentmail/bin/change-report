@@ -1,0 +1,294 @@
+#!/usr/bin/env python3
+"""Write a change report for a range of commits, so the human over-reviewer can
+see exactly what an agent changed without reading the diff.
+
+Why this exists: Ramesh designs the architecture but no longer writes the code.
+After a night of agent work he could not tell what was written, which flows
+changed, which files and functions were touched, or how a fix was implemented.
+DONE mails and reviews held that knowledge, scattered and in prose.
+
+Two halves:
+  FACTS      generated here from git, so they cannot be misreported: commits,
+             files, symbols added/changed/removed, tests, dependencies and
+             sensitive areas (server, rules, payments, keys, config).
+  NARRATIVE  written by the authoring agent: what and why, the flow step by
+             step, how it is implemented, how it was verified, deploy impact.
+
+    change-report <base> [<head>] [--repo DIR] [--task ID] [--narrative FILE] [--out FILE]
+    change-report --check FILE      exit 1 while any TODO(author) remains
+
+Symbol detection is a language-agnostic heuristic (Dart, TS/JS, Python, Kotlin,
+Swift); it lists definitions whose lines were added or removed, plus the
+enclosing definition git names for each hunk. It never claims behaviour.
+"""
+from __future__ import annotations
+import argparse, re, subprocess, sys
+from collections import defaultdict
+
+KEYWORDS = {"if", "for", "while", "switch", "catch", "return", "await", "new",
+            "throw", "else", "do", "try", "assert", "super", "this", "print",
+            "setState", "when", "with", "sizeof", "typeof", "yield"}
+CLASS_RE = re.compile(r"^\s*(?:export\s+)?(?:default\s+)?(?:abstract\s+|sealed\s+|final\s+|base\s+|data\s+|open\s+|private\s+|public\s+|internal\s+)*"
+                      r"(class|mixin|enum|extension|interface|type|struct|protocol|object)\s+(\w+)")
+FUNC_RES = [
+    re.compile(r"^\s*(?:async\s+)?def\s+(\w+)\s*\("),                                   # python
+    re.compile(r"^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s*\*?\s*(\w+)"),  # js/ts
+    re.compile(r"^\s*(?:export\s+)?(?:const|let)\s+(\w+)\s*(?::[^=]+)?=\s*(?:async\s*)?(?:\([^)]*\)|\w+)\s*(?::[^=]+)?=>"),
+    re.compile(r"^\s*(?:export\s+)?const\s+(\w+)\s*=\s*(?:onCall|onRequest|onDocument\w*|onSchedule|onObjectFinalized|functions\.\w+)"),
+    re.compile(r"^\s*(?:(?:override|public|private|protected|internal|open|suspend|static)\s+)*fun\s+(?:<[^>]*>\s*)?(?:\w+\.)?(\w+)\s*\("),  # kotlin
+    re.compile(r"^\s*(?:(?:@\w+\s+)|(?:public|private|internal|fileprivate|static|override|mutating)\s+)*func\s+(\w+)"),  # swift
+]
+# Dart/Java/TS method: something before the name, a parameter list, then a body.
+METHOD_RE = re.compile(r"^\s*(?:@\w+(?:\([^)]*\))?\s+)*(?:[\w<>\[\]?,.]+\s+)+(\w+)\s*(?:<[^>]*>)?\s*\([^;]*\)\s*(?:async\*?|sync\*)?\s*(?:\{|=>)")
+TEST_CALL_RE = re.compile(r"^\s*(?:void\s+|await\s+)?(?:testWidgets|test|it|group|describe)\s*\(\s*['\"`]")
+# Declaration whose parameter list continues on the next lines: `Foo bar({` / `static Future<X> baz(`
+METHOD_START_RE = re.compile(r"^\s*(?:@\w+(?:\([^)]*\))?\s+)*(?:[\w<>\[\]?,.]+\s+)+(\w+)\s*(?:<[^>]*>)?\s*\(\{?\s*$")
+SENSITIVE = [
+    ("Security rules", re.compile(r"(^|/)(firestore|storage|database)\.rules$|\.rules$")),
+    ("Server code (Cloud Functions)", re.compile(r"(^|/)functions/src/")),
+    ("Database indexes", re.compile(r"indexes\.json$")),
+    ("Dependencies", re.compile(r"(^|/)(pubspec\.yaml|package\.json|requirements\.txt|pyproject\.toml|build\.gradle(\.kts)?|Podfile)$")),
+    ("Config / environment", re.compile(r"(^|/)\.env|firebase\.json$|\.firebaserc$|remote_config|AndroidManifest\.xml$|Info\.plist$")),
+    ("Payments / money", re.compile(r"pay|wallet|transfer|ledger|hedera|exchange|dex|booking|ticket|credit", re.I)),
+    ("Auth / identity / keys", re.compile(r"auth|login|register|kyc|key|secret|crypto|sign|jwt|session|backup", re.I)),
+    ("Migrations / one-off scripts", re.compile(r"(^|/)(scripts?|migrations?)/")),
+]
+
+
+def git(repo, *args):
+    return subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True, check=True).stdout
+
+
+def is_test(path):
+    return bool(re.search(r"(^|/)(test|tests|__tests__|integration_test)/|_test\.\w+$|\.test\.\w+$|\.spec\.\w+$|(^|/)test_\w+\.py$", path))
+
+
+def symbols(line):
+    m = CLASS_RE.match(line)
+    if m:
+        return f"{m.group(1)} {m.group(2)}"
+    for r in FUNC_RES:
+        m = r.match(line)
+        if m:
+            return f"{m.group(1)}()"
+    if line.lstrip().startswith(("return ", "await ", "throw ", "else", "}", "new ", "const ", "final ", "var ", "late ", "yield ")) or "=" in line.split("(")[0]:
+        return None
+    m = METHOD_RE.match(line) or METHOD_START_RE.match(line)
+    if m and m.group(1) not in KEYWORDS:
+        return f"{m.group(1)}()"
+    return None
+
+
+TOPLEVEL_RE = re.compile(r"^(?:export\s+)?(?:const|final|var|let)\s+(?:[\w<>?]+\s+)?(\w+)\s*(?::[^=]+)?=")
+
+
+def enclosing(lines, idx, test_file):
+    """Nearest definition (or test case, in test files) at or above 0-based line idx."""
+    for i in range(min(idx, len(lines) - 1), -1, -1):
+        ln = lines[i]
+        if test_file and TEST_CALL_RE.match(ln):
+            name = re.search(r"\(\s*(['\"`])(.*?)\1", ln)
+            return f"test '{name.group(2)}'" if name else None
+        s = symbols(ln)
+        if s:
+            return s
+        m = TOPLEVEL_RE.match(ln)
+        if m:
+            return m.group(1)
+    return None
+
+
+def parse_diff(repo, base, head, text):
+    """Per file: definitions added/removed, and the definition enclosing every changed line."""
+    out = defaultdict(lambda: {"plus": set(), "minus": set(), "touched": set(), "tests_plus": [], "tests_minus": []})
+    cache = {}
+
+    def content(rev, path):
+        if (rev, path) not in cache:
+            try:
+                cache[(rev, path)] = git(repo, "show", f"{rev}:{path}").splitlines()
+            except subprocess.CalledProcessError:
+                cache[(rev, path)] = []
+        return cache[(rev, path)]
+
+    cur = old = None
+    for line in text.splitlines():
+        if line.startswith("diff --git "):
+            cur = old = None
+        elif line.startswith("--- "):
+            p = line[4:]
+            old = None if p == "/dev/null" else p[2:] if p.startswith("a/") else p
+            cur = old
+        elif line.startswith("+++ "):
+            p = line[4:]
+            if p != "/dev/null":  # deleted files keep the old name
+                cur = p[2:] if p.startswith("b/") else p
+        elif line.startswith("@@") and cur:
+            m = re.match(r"@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line)
+            if not m:
+                continue
+            o0, oc, n0, nc = int(m.group(1)), int(m.group(2) or 1), int(m.group(3)), int(m.group(4) or 1)
+            t = is_test(cur)
+            if nc:
+                for i in range(n0 - 1, n0 - 1 + nc):
+                    e = enclosing(content(head, cur), i, t)
+                    if e:
+                        out[cur]["touched"].add(e)
+            elif old:
+                e = enclosing(content(base, old), o0 - 1, t)
+                if e:
+                    out[cur]["touched"].add(e)
+        elif cur and line[:1] in "+-" and not line.startswith(("+++", "---")):
+            body = line[1:]
+            s = symbols(body)
+            if s:
+                out[cur]["plus" if line[0] == "+" else "minus"].add(s)
+            if TEST_CALL_RE.match(body):
+                name = re.search(r"\(\s*(['\"`])(.*?)\1", body)
+                out[cur]["tests_plus" if line[0] == "+" else "tests_minus"].append(name.group(2) if name else body.strip())
+    return out
+
+
+def dep_lines(repo, base, head, path):
+    d = git(repo, "diff", "-U0", base, head, "--", path)
+    return [l for l in d.splitlines() if l[:1] in "+-" and not l.startswith(("+++", "---")) and l[1:].strip() and not l[1:].strip().startswith("#")]
+
+
+NARRATIVE_TEMPLATE = """## What and why
+TODO(author): one paragraph. The problem or request, and the outcome now.
+
+## Flow (step by step)
+TODO(author): the runtime path through the change, entry point first. Example:
+1. User taps Pay on `SkyzaiPayConfirmationScreen` -> `SignTransactionCubit.sign()`.
+2. App calls the `completeSkyzaiPayment` callable with the Hedera transaction id.
+3. Server verifies the transaction on Mirror, claims it once in `usedHederaTransferIds`, marks the payment paid.
+
+## How it is implemented
+TODO(author): the design choice and why, per main file/function. Name the functions.
+What was considered and rejected, and any shortcut with its known limit.
+
+## How it was verified
+TODO(author): failing-first test, then passing; suites run with counts; what was NOT checked (device, build, live).
+
+## Deploy / release impact
+TODO(author): what must be deployed (functions by name, rules, indexes, config values, app release), in what order. "None" if app/tests only.
+"""
+
+
+def build(args):
+    repo, base, head = args.repo, args.base, args.head
+    base_sha, head_sha = git(repo, "rev-parse", "--short", base).strip(), git(repo, "rev-parse", "--short", head).strip()
+    branch = git(repo, "rev-parse", "--abbrev-ref", "HEAD").strip()
+    commits = git(repo, "log", "--no-merges", "--reverse", "--format=%h|%an|%ad|%s", "--date=format:%Y-%m-%d %H:%M", f"{base}..{head}").splitlines()
+    merges = git(repo, "log", "--merges", "--reverse", "--format=%h|%s", f"{base}..{head}").splitlines()
+    status = [l.split("\t") for l in git(repo, "diff", "-M", "--name-status", base, head).splitlines() if l]
+    nums = {}
+    for l in git(repo, "diff", "-M", "--numstat", base, head).splitlines():
+        a, d, p = l.split("\t", 2)
+        p = re.sub(r"\{([^}]*) => ([^}]*)\}", r"\2", p.split(" => ")[-1]) if "=>" in p else p
+        nums[p] = (a, d)
+    diff = parse_diff(repo, base, head, git(repo, "diff", "-M", "-U0", base, head))
+
+    files = []
+    for row in status:
+        kind, path = row[0][0], row[-1]
+        a, d = nums.get(path, ("?", "?"))
+        files.append((kind, path, row[1] if kind == "R" else None, a, d))
+    label = {"A": "added", "M": "modified", "D": "deleted", "R": "renamed", "C": "copied", "T": "type changed"}
+
+    L = []
+    title = args.task or f"{base_sha}..{head_sha}"
+    L.append(f"# Change report: {title}\n")
+    L.append(f"Repo `{repo}`, branch `{branch}`, range `{base_sha}..{head_sha}`.")
+    tot_a = sum(int(f[3]) for f in files if f[3].isdigit()); tot_d = sum(int(f[4]) for f in files if f[4].isdigit())
+    L.append(f"{len(commits)} commits, {len(merges)} merges, {len(files)} files, +{tot_a} / -{tot_d} lines.\n")
+    L.append("Part 1 is written by the authoring agent. Part 2 is generated from git by `agentmail/bin/change-report` and is the ground truth: if they disagree, Part 2 wins and the disagreement is a review finding.\n")
+    L.append("# Part 1: Narrative (authoring agent)\n")
+    L.append(open(args.narrative).read().strip() + "\n" if args.narrative else NARRATIVE_TEMPLATE)
+    L.append("# Part 2: Facts (generated from git)\n")
+
+    flags = defaultdict(list)
+    for kind, path, old, a, d in files:
+        for name, rx in SENSITIVE:
+            if rx.search(path) and not is_test(path) and not path.endswith(".md"):
+                flags[name].append(path)
+    L.append("## Sensitive areas touched\n")
+    if flags:
+        for name, _ in SENSITIVE:
+            if flags.get(name):
+                L.append(f"- **{name}** ({len(flags[name])}): " + ", ".join(f"`{p}`" for p in flags[name][:12]) + (" ..." if len(flags[name]) > 12 else ""))
+    else:
+        L.append("- None.")
+    L.append("")
+
+    dep_files = [f[1] for f in files if re.search(SENSITIVE[3][1].pattern, f[1])]
+    if dep_files:
+        L.append("## Dependency changes\n")
+        for p in dep_files:
+            lines = dep_lines(repo, base, head, p)
+            L.append(f"`{p}`:\n```diff\n" + "\n".join(lines[:40]) + ("\n..." if len(lines) > 40 else "") + "\n```")
+        L.append("")
+
+    L.append("## Commits\n")
+    for c in commits:
+        h, an, dt, s = c.split("|", 3)
+        L.append(f"- `{h}` {dt} {an}: {s}")
+    for m in merges:
+        h, s = m.split("|", 1)
+        L.append(f"- merge `{h}`: {s}")
+    L.append("")
+
+    def section(title, pred):
+        rows = [f for f in files if pred(f[1])]
+        if not rows:
+            return
+        L.append(f"## {title} ({len(rows)})\n")
+        for kind, path, old, a, d in sorted(rows, key=lambda r: r[1]):
+            info = diff.get(path) or (diff.get(old) if old else None) or {"plus": set(), "minus": set(), "touched": set(), "tests_plus": [], "tests_minus": []}
+            added, removed = info["plus"] - info["minus"], info["minus"] - info["plus"]
+            changed = (info["plus"] & info["minus"]) | (info["touched"] - added - removed)
+            if any(not c.startswith("class ") for c in changed):
+                changed = {c for c in changed if not c.startswith(("class ", "main()"))} or changed
+            head_line = f"### `{path}` ({label.get(kind, kind)}{f' from `{old}`' if old else ''}, +{a}/-{d})"
+            L.append(head_line)
+            for nm, s in (("Added", added), ("Changed", changed), ("Removed", removed)):
+                if s:
+                    L.append(f"- {nm}: " + ", ".join(f"`{x}`" for x in sorted(s)))
+            if info["tests_plus"]:
+                L.append(f"- Test cases added/edited ({len(info['tests_plus'])}): " + "; ".join(info["tests_plus"][:15]) + (" ..." if len(info["tests_plus"]) > 15 else ""))
+            if info["tests_minus"]:
+                L.append(f"- Test cases removed/edited ({len(info['tests_minus'])}): " + "; ".join(info["tests_minus"][:15]))
+            L.append("")
+
+    section("Source files", lambda p: not is_test(p) and not p.endswith(".md"))
+    section("Test files", is_test)
+    section("Docs and context files", lambda p: p.endswith(".md") and not is_test(p))
+    return "\n".join(L).rstrip() + "\n"
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap.add_argument("base", nargs="?")
+    ap.add_argument("head", nargs="?", default="HEAD")
+    ap.add_argument("--repo", default=".")
+    ap.add_argument("--task")
+    ap.add_argument("--narrative", help="markdown file with the Part 1 sections filled in")
+    ap.add_argument("--out")
+    ap.add_argument("--check", metavar="FILE", help="exit 1 if FILE still has TODO(author)")
+    args = ap.parse_args()
+    if args.check:
+        left = [l for l in open(args.check) if "TODO(author)" in l]
+        print(f"{len(left)} TODO(author) left in {args.check}" if left else f"complete: {args.check}")
+        sys.exit(1 if left else 0)
+    if not args.base:
+        ap.error("base is required")
+    text = build(args)
+    if args.out:
+        open(args.out, "w").write(text)
+        print(args.out)
+    else:
+        sys.stdout.write(text)
+
+
+if __name__ == "__main__":
+    main()

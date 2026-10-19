@@ -59,3 +59,10 @@ before acting. Messages have a `type:` — `proposal` asks for your verdict
 - If you are an advisory/reviewer seat, your reviews INFORM the overseer's
   decisions — you advise, you do not gate, veto, or outrank the overseer.
   Authority runs human → overseer → children/advisors.
+- **Change report (OPERATIONAL_RULES rule 27).** If your task changes code,
+  your DONE includes a change report: run
+  `<path>/agentmail/bin/change-report <base> HEAD --repo <your worktree> --task <task-id> --out <file>`
+  and fill every `TODO(author)` section (what and why, flow step by step with
+  real function names, how it is implemented, how verified, deploy impact).
+  Do not edit Part 2; it is generated from git. `change-report --check <file>`
+  must print `complete`. Reviewers check the report against the diff.

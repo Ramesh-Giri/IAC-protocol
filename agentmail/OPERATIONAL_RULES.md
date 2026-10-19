@@ -282,3 +282,21 @@ A real finding inside a PR that is closed becomes a fresh fix task against curre
 Template: `.agent-mail/attachments/prtriage-1013/BRIEF.md` and its TRIAGE.md.
 
 *Revision: rule 26 added 2026-10-13.*
+
+## 27. Every merged change ships a change report the human can read without the diff
+
+Ramesh, 2026-10-19: he designs the architecture but no longer writes the code, and after a night of agent work he could not tell what was written, which flows changed, which files and functions were touched, or how a fix was implemented.
+The knowledge existed only scattered across DONE mails and reviews.
+
+Every unit of work that changes code ends with a change report, and nothing merges without one.
+
+- **The author writes Part 1 (narrative).** Generate the skeleton with `agentmail/bin/change-report <base> HEAD --repo <worktree> --task <task-id> --out <file>`, then fill every `TODO(author)` section: what and why, the flow step by step (entry point first, real function names), how it is implemented (design choice, what was rejected, known limits), how it was verified (failing test first, suites with counts, what was NOT checked), and deploy/release impact. Codex seats that cannot write the repo deliver it as `attachments/<batch>/<KEY>_CHANGE_REPORT.md` next to their patches and link it in DONE.
+- **Part 2 (facts) is generated from git, never hand-written.** Commits, every file changed, functions and classes added/changed/removed, test cases, dependency diffs and sensitive areas (server, rules, payments, keys, config). It is the ground truth: if Part 1 disagrees with it, that is a review finding.
+- **The reviewer checks the report against the diff**, not just the code: a flow step that does not exist, an unlisted sensitive area or a missing deploy step is CHANGES-REQUIRED.
+- **The overseer refuses to merge** while `change-report --check <file>` reports any `TODO(author)`. On merge it regenerates Part 2 for the exact merged range (`<merge>^1..<merge>`), keeps the author's Part 1, and commits the result in the product repo as `docs/changes/<YYYY-MM-DD>-<task-id>.md` in the same merge, so the record travels with the code.
+- **Daily digest.** After a batch or an overnight run, the overseer writes `docs/changes/<YYYY-MM-DD>-DIGEST.md`: one paragraph per merged task in plain language linking its report, plus what is held, what needs the human, and the deploy impact in one list.
+- **Test-case ledger.** Any change to user-visible behaviour also updates the product's sheet in `/Users/darkness/Work/Aureus/AUREUS_TEST_CASES.xlsx` (plain-language case, expected result, honest status: PENDING until deployed and seen working).
+
+The overseer puts this rule in every brief that changes code.
+
+*Revision: rule 27 added 2026-10-19.*
