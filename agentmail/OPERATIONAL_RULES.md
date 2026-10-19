@@ -300,3 +300,23 @@ Every unit of work that changes code ends with a change report, and nothing merg
 The overseer puts this rule in every brief that changes code.
 
 *Revision: rule 27 added 2026-10-19.*
+
+## 28. Document a file the first time you touch it, and keep the project map current
+
+Ramesh, 2026-10-19: every file an agent touches should be documented properly the first time, and a graph should show which file links to what, in a tree, updated as agents touch files rather than all at once, so that in the end he has a detailed map of the entire project.
+
+- **First touch documents the file.** When an agent edits a source file that has no header doc comment, it adds one at the top in the same change. Keep it short and true to the code:
+  - line 1: one sentence, what this file is for (this line is what the map shows);
+  - then: the main classes/functions and what they do; what it depends on (other project files, services, storage, network); who uses it; side effects (writes data, calls the server, sends money, touches keys or hardware).
+  - Dart: `///` lines at the very top, followed by `library;`. TS/JS: a leading `/** ... */`. Python: the module docstring.
+  Tooling lines (ignore_for_file, eslint, licence banners) are not documentation.
+- **Later touches keep it true.** If a change alters what the header says, the header changes in the same commit. A stale header is a review finding.
+- **Folders.** A new folder gets a `README.md` whose first line says what the folder holds.
+- **Never document in bulk.** Coverage grows only through real work on a file. Do not open files just to add headers.
+- **The map.** `agentmail/bin/project-map --repo <repo>` writes `docs/map/PROJECT_MAP.md` (folder tree, each file's purpose or `undocumented`, the files it links to, how many use it, coverage per folder) and `docs/map/graph.json`. The overseer regenerates and commits it on every merge, next to the rule-27 change report.
+- **Agent graph.** Where a repo has `graphify-out/`, agents also run `graphify update .` after code changes so `graphify query/path/explain` stay current.
+- **Reviewers check it.** A touched file left without a header, or with a header that no longer matches the code, is CHANGES-REQUIRED.
+
+The overseer puts this rule in every brief that changes code.
+
+*Revision: rule 28 added 2026-10-19.*

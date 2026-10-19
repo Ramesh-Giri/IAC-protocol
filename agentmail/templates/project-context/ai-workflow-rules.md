@@ -38,6 +38,15 @@ contracts or standards change. In `progress-tracker.md`, record actual
 completion with evidence, blockers, decisions and the next actionable step.
 Plans are not completed work; file existence is not proof tests passed.
 
+## Document what you touch, report what you changed
+
+- A source file you edit without a header doc comment gets one in the same
+  change (line 1: what the file is for; then main functions, dependencies,
+  users, side effects). Keep headers true; never add them in bulk.
+- Every merged change ships a change report (`agentmail/bin/change-report`)
+  in `docs/changes/`, and the project map (`agentmail/bin/project-map`) in
+  `docs/map/` is regenerated on merge. IAC operational rules 27 and 28.
+
 ## Session handoff
 
 {{CONCISE_PROJECT_SPECIFIC_HANDOFF_AND_OPTIONAL_IAC_COORDINATION_RULES}}
