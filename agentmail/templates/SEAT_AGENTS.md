@@ -71,3 +71,8 @@ before acting. Messages have a `type:` — `proposal` asks for your verdict
   what the file is for, then main classes/functions, dependencies, users and
   side effects. Keep existing headers true when behaviour changes. Never add
   headers in bulk to files you did not otherwise change.
+- **Machine budget (OPERATIONAL_RULES rule 29).** Run only focused tests for
+  what you changed, through the shared lanes (heavy.sh, or `testlane run`
+  once live). Never build apps (apk/ipa/web, Gradle) and never run the full
+  analyzer gate or full suites: the overseer does that once per merge. If
+  lanes are busy, deliver and mark unrun checks honestly.
