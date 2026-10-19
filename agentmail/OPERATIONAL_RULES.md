@@ -347,9 +347,17 @@ Ramesh, 2026-10-19: cold Flutter compilation and duplicated Node installs in 7-8
   Supported forms are `flutter test --no-pub <paths...>` (concurrency 1), `flutter analyze <paths...>`, `python3 tool/analyzer_gate.py`, `npm test`, `npm run build`, `npx tsc -p <config>` and `node --test <files...>`.
   Paths must stay inside the lane and may not traverse symlinks; shell strings, arbitrary flags, app builds and dependency-install jobs are rejected and logged.
   TypeScript uses the lane's installed compiler directly, so npx cannot install a missing package.
+  Both runner-managed TypeScript paths first resolve JSONC and inherited configs with `tsc --showConfig`, then pin `rootDir` to `functions/` and all emission paths with runner-owned CLI flags.
+  A config named `tsconfig.test.json` emits under `functions/.test-build/`; other explicit TypeScript configs emit under `functions/lib/`, preserving paths relative to `functions/`.
+  Declarations and incremental build-info files stay in that same output directory, and `noEmitOnError` prevents emission from invalid source roots.
+  Output directories and their existing contents must resolve inside that fixed directory, without symlinks, special files or regular files with multiple hard links.
+  Configured `outFile`, `generateTrace` and `generateCpuProfile` outputs are unsupported and rejected before compilation, including values inherited through `extends`.
+  Other command forms also reject caller-supplied output-path flags.
   Focused Node targets under `functions/.test-build/` are compiled with `tsconfig.test.json` in the same job and lane, sharing the test timeout.
   Those generated targets may be absent in the seat; the runner removes the requested cached output files first and requires the current patch to emit them again.
-  This controls command submission; test code and dependency manifests still require review and trust because they and installation hooks execute on the runner host.
+  Test-config compiles also discard their fixed incremental build-info file so TypeScript cannot skip recreating a deleted generated target.
+  This controls command submission and runner-managed compiler output paths; it is not a host filesystem sandbox.
+  Test code, npm scripts and dependency manifests still require review and trust because they and installation hooks execute with the runner user's host permissions, including access beyond their lane.
 - **Seats never build apps** (apk/ipa/web or Gradle) **and never run the full analyzer gate or full suites.**
   The overseer builds the app and runs full validation once per merge.
   When lanes are busy, a brief may permit delivery with unrun checks stated honestly.
