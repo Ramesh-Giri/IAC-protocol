@@ -320,3 +320,15 @@ Ramesh, 2026-10-19: every file an agent touches should be documented properly th
 The overseer puts this rule in every brief that changes code.
 
 *Revision: rule 28 added 2026-10-19.*
+
+## 29. Seats never compile or test in their own worktree in bulk; heavy work is shared and owned by the overseer
+
+Ramesh, 2026-10-19: 7-8 seats each compiled the 1,700-file Flutter app from cold, ran Flutter/Node tests and kept a ~1 GB functions/node_modules in their own worktree. On a 16 GB Mac this filled swap (6.4/7.2 GB), pushed load above 20, made tests time out at their limits, and froze unrelated apps (a game in the browser stuttered). One seat even ran a full `flutter build apk --debug` it did not need, holding ~1.4 cores of Gradle. A stale per-worktree `node_modules` also caused a phantom "missing module" failure that looked like a code bug.
+
+- **Seats run only focused tests, through the shared lanes.** Until the `testlane` runner is live, that means `heavy.sh` with the smallest test-file list that proves the change. When `testlane` is live, seats submit `testlane run` jobs instead and never compile in their own worktree.
+- **Seats never build apps** (no `flutter build apk/ipa/web`, no Gradle) **and never run the full analyzer gate or full suites.** The overseer builds the app and runs the full gate and suites once per merge. A brief may say "deliver and let the overseer validate" when lanes are busy; the seat then marks unrun checks honestly.
+- **Cap concurrent seats at about 5 on this Mac.** Past that, swapping makes everyone slower; queue the rest and start them as seats finish. Prefer Codex Cloud (no local RAM) for read-only reviews and audits once its environment exists.
+- **The overseer checks the machine, not just the seats**: `sysctl vm.swapusage` and load before launching, and kills orphaned build daemons (Gradle/Kotlin) it or seats left behind.
+- Every brief that touches code carries this rule.
+
+*Revision: rule 29 added 2026-10-19 (interim; the `testlane` tool, task testlane-1019, will replace the heavy.sh wording).*
