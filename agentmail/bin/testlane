@@ -1,0 +1,772 @@
+#!/usr/bin/env python3
+"""Run seat test snapshots in a bounded pool of warm, runner-owned git worktrees.
+
+Seats use snapshot()/client() without writing their index or object store.
+runner() schedules worker processes; Lane resets, patches, warms and compiles tests.
+Uses Python stdlib, git and locally installed Flutter/Node tools, plus queue files.
+Writes only the queue and its dedicated worktrees (runner also registers worktrees).
+Runner-owned TypeScript invocations pin emission paths and reject output symlinks.
+The argv allowlist is a command boundary; repository test code must be trusted.
+See ../OPERATIONAL_RULES.md rule 29 and ../templates/SEAT_AGENTS.md.
+"""
+from __future__ import annotations
+
+import argparse
+import base64
+import binascii
+import fcntl
+import hashlib
+import json
+import math
+import os
+from pathlib import Path, PurePosixPath
+import re
+import shutil
+import signal
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+import uuid
+
+VERSION = "1.0.0"
+LANE_LOCK = None
+MAX_PATCH = 64 * 1024 * 1024
+MAX_JOB = MAX_PATCH * 2
+MAX_TIMEOUT = 3600
+ID = re.compile(r"[a-f0-9]{32}")
+SHA = re.compile(r"(?:[a-f0-9]{40}|[a-f0-9]{64})")
+CACHES = ("node_modules/", ".dart_tool/", "build/", "functions/lib*", ".test-build/")
+MANIFESTS = {"flutter": ("pubspec.yaml", "pubspec.lock"),
+             "npm": ("functions/package.json", "functions/package-lock.json")}
+GIT_OPTIONS = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
+               "-c", "core.splitIndex=false", "-c", "submodule.recurse=false"]
+
+
+class Error(Exception):
+    """An actionable tool or job error."""
+
+
+def environment(install=False):
+    env = {k: os.environ[k] for k in ("PATH", "HOME", "TMPDIR", "PUB_CACHE",
+                                     "FLUTTER_ROOT", "JAVA_HOME", "ANDROID_HOME")
+           if k in os.environ}
+    env.update(CI="true", GIT_TERMINAL_PROMPT="0", LANG="en_US.UTF-8",
+               FLUTTER_SUPPRESS_ANALYTICS="true", DART_SUPPRESS_ANALYTICS="true",
+               npm_config_yes="false", npm_config_audit="false", npm_config_fund="false")
+    if not install:
+        env["npm_config_offline"] = "true"
+    return env
+
+
+def git(repo, *args, env=None, data=None):
+    p = subprocess.run(["git", *GIT_OPTIONS, "-C", str(repo), *args], input=data,
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                       env=env or environment(), timeout=120)
+    if p.returncode:
+        raise Error(p.stderr.decode(errors="replace").strip() or "git operation failed")
+    return p.stdout
+
+
+def read_json(path):
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as f:
+        info = os.fstat(f.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_JOB:
+            raise Error("queue entry must be a bounded, regular file")
+        return json.loads(f.read(MAX_JOB + 1))
+
+
+def write_json(path, value, replace=False):
+    """Publish complete JSON; results and new submissions are never overwritten."""
+    fd, name = tempfile.mkstemp(prefix=".publish-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(value, f)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        if replace:
+            os.replace(name, path)
+        else:
+            os.link(name, path)
+    finally:
+        Path(name).unlink(missing_ok=True)
+
+
+def queue_dirs(queue):
+    queue.mkdir(parents=True, exist_ok=True)
+    for name in ("jobs", "running", "results", "logs", "lanes", "state", "tmp", "rejected"):
+        p = queue / name
+        if p.is_symlink():
+            raise Error(f"queue directory is a symlink: {p}")
+        p.mkdir(exist_ok=True)
+
+
+def event(queue, kind, **fields):
+    fd = os.open(queue / "events.log", os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "a") as f:
+        f.write(json.dumps({"time": time.time(), "event": kind, **fields}) + "\n")
+
+
+def lock(path):
+    fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        os.close(fd)
+        return None
+    return fd
+
+
+def safe_path(root, name, must_exist=True):
+    if not isinstance(name, str) or not name or re.search(r"[\x00-\x1f\\:;|&`$<>]", name):
+        raise Error("invalid repository path")
+    parts = PurePosixPath(name).parts
+    if name.startswith(("/", "-")) or not parts or any(p.casefold() in (".", "..", ".git") for p in parts):
+        raise Error(f"path must stay inside the lane: {name}")
+    p = root
+    for part in parts:
+        p = p / part
+        if p.is_symlink():
+            raise Error(f"symlink path is not allowed: {name}")
+    if must_exist and not p.exists():
+        raise Error(f"repository path does not exist: {name}")
+    return p
+
+
+def generated_test(name, cwd):
+    prefix = ".test-build/" if cwd == "functions" else "functions/.test-build/"
+    return str(PurePosixPath(name)).startswith(prefix)
+
+
+def validate_command(argv, cwd, root, allow_generated=False):
+    """Accept exact executable/flag shapes and explicit in-repository paths only."""
+    if (not isinstance(argv, list) or not argv or len(argv) > 256 or
+            any(not isinstance(a, str) or not a or len(a) > 4096 or
+                re.search(r"[\x00-\x1f]", a) for a in argv)):
+        raise Error("command must be an argv array of nonempty strings")
+    if cwd not in (".", "functions"):
+        raise Error("cwd must be . or functions")
+    work = root if cwd == "." else safe_path(root, cwd)
+    if argv[:2] == ["flutter", "test"] and cwd == ".":
+        if argv[2:3] != ["--no-pub"]:
+            raise Error("flutter test requires --no-pub and explicit test paths")
+        paths = []
+        i = 3
+        while i < len(argv):
+            a = argv[i]
+            if a in ("--concurrency=1", "--reporter=expanded", "--reporter=compact", "--reporter=json"):
+                i += 1
+                continue
+            if a in ("--concurrency", "--reporter"):
+                if i + 1 >= len(argv) or argv[i + 1] not in (
+                        ("1",) if a == "--concurrency" else ("expanded", "compact", "json")):
+                    raise Error("only concurrency 1 and expanded/compact/json reporters are allowed")
+                i += 2
+                continue
+            if a.startswith("-"):
+                raise Error(f"flutter test option is not allowed: {a}")
+            p = safe_path(work, a)
+            if not p.is_dir() and p.suffix != ".dart":
+                raise Error("flutter test paths must be Dart files or directories")
+            paths.append(a)
+            i += 1
+        if not paths:
+            raise Error("flutter test requires explicit test paths")
+        return
+    if argv[:2] == ["flutter", "analyze"] and cwd == ".":
+        paths = argv[2:]
+        if paths[:1] == ["--no-pub"]:
+            paths = paths[1:]
+        if not paths:
+            raise Error("flutter analyze requires explicit paths")
+        for name in paths:
+            safe_path(work, name)
+        return
+    if argv == ["python3", "tool/analyzer_gate.py"] and cwd == ".":
+        safe_path(work, argv[1])
+        return
+    if cwd == "functions" and argv in (["npm", "test"], ["npm", "run", "build"]):
+        safe_path(work, "package.json")
+        return
+    if cwd == "functions" and len(argv) == 4 and argv[:3] == ["npx", "tsc", "-p"]:
+        if safe_path(work, argv[3]).suffix != ".json":
+            raise Error("tsc requires an in-repository JSON config")
+        return
+    if len(argv) > 2 and argv[:2] == ["node", "--test"]:
+        for name in argv[2:]:
+            p = safe_path(work, name, must_exist=not (allow_generated and generated_test(name, cwd)))
+            if p.suffix not in (".js", ".cjs", ".mjs"):
+                raise Error("node --test requires explicit JavaScript test files")
+        return
+    raise Error("command is not allowlisted")
+
+
+def validate_job(job, filename):
+    keys = {"id", "base", "argv", "cwd", "timeout", "patch", "attempt", "_lane"}
+    required = {"id", "base", "argv", "cwd", "timeout", "patch"}
+    if not isinstance(job, dict) or set(job) - keys or required - set(job):
+        raise Error("invalid job schema")
+    if not isinstance(job["argv"], list) or not job["argv"] or any(
+            not isinstance(a, str) or not a for a in job["argv"]) or job["cwd"] not in (".", "functions"):
+        raise Error("invalid command argv or cwd")
+    if "_lane" in job and (type(job["_lane"]) is not int or not 0 <= job["_lane"] < 16):
+        raise Error("invalid lane number")
+    if not ID.fullmatch(str(job.get("id", ""))) or job["id"] != filename:
+        raise Error("job id must match its filename")
+    if not isinstance(job.get("base"), str) or not SHA.fullmatch(job["base"]):
+        raise Error("base must be a full commit hash")
+    timeout = job.get("timeout")
+    if type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0 < timeout <= MAX_TIMEOUT:
+        raise Error(f"timeout must be between 0 and {MAX_TIMEOUT} seconds")
+    if type(job.get("attempt", 0)) is not int or job.get("attempt", 0) not in (0, 1):
+        raise Error("invalid recovery attempt")
+    if not isinstance(job.get("patch"), str) or len(job["patch"]) > MAX_JOB - 4096:
+        raise Error("invalid patch encoding or patch too large")
+    try:
+        patch = base64.b64decode(job["patch"], validate=True)
+    except (ValueError, binascii.Error) as exc:
+        raise Error("invalid base64 patch") from exc
+    if len(patch) > MAX_PATCH:
+        raise Error("patch exceeds 64 MiB")
+    return patch
+
+
+def index_environment(repo, directory):
+    common = Path(git(repo, "rev-parse", "--git-common-dir").decode().strip())
+    common = (repo / common).resolve()
+    objects = Path(directory) / "objects"
+    objects.mkdir()
+    env = environment()
+    env.update(GIT_INDEX_FILE=str(Path(directory) / "index"), GIT_OBJECT_DIRECTORY=str(objects),
+               GIT_ALTERNATE_OBJECT_DIRECTORIES=str(common / "objects"))
+    return env
+
+
+def snapshot(repo, base, scratch):
+    """Stage the worktree in a disposable index AND disposable object directory."""
+    repo = repo.resolve()
+    if Path(git(repo, "rev-parse", "--show-toplevel").decode().strip()).resolve() != repo:
+        raise Error("--repo-dir must be the worktree root")
+    base = git(repo, "rev-parse", "--verify", f"{base}^{{commit}}").decode().strip()
+    with tempfile.TemporaryDirectory(prefix="snapshot-", dir=scratch) as td:
+        env = index_environment(repo, td)
+        git(repo, "read-tree", base, env=env)
+        git(repo, "add", "--all", "--", ".", env=env)
+        patch = git(repo, "diff", "--cached", "--binary", "--full-index", "--no-renames",
+                    "--no-ext-diff", "--no-textconv", base, "--", ".", env=env)
+    if len(patch) > MAX_PATCH:
+        raise Error("patch exceeds 64 MiB")
+    return base, patch
+
+
+def run_process(argv, cwd, log, timeout, install=False, output=None):
+    """Bound the whole process group, including children on timeout or completion."""
+    log.write(("\n$ " + json.dumps(argv) + "\n").encode())
+    log.flush()
+    if timeout <= 0:
+        log.write(b"timeout: command budget exhausted\n")
+        return 124
+    p = subprocess.Popen(argv, cwd=cwd, stdout=log if output is None else output, stderr=subprocess.STDOUT,
+                         env=environment(install), start_new_session=True,
+                         pass_fds=() if LANE_LOCK is None else (LANE_LOCK,))
+    try:
+        return p.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        log.write(b"\ntimeout: process group terminated\n")
+        return 124
+    finally:
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        p.wait()
+
+
+def executable(name, lane):
+    tool = shutil.which(name, path=environment().get("PATH"))
+    if not tool or lane in Path(tool).absolute().parents or lane in Path(tool).resolve().parents:
+        raise Error("allowlisted executable is not installed on the runner PATH")
+    return tool
+
+
+class Lane:
+    def __init__(self, queue, number, config):
+        self.queue, self.number, self.config = queue, number, config
+        self.path = queue / "lanes" / str(number)
+        self.state_path = queue / "state" / f"{number}.json"
+
+    def reset(self, base):
+        for name in ("node_modules", ".dart_tool", "build", "functions", "functions/node_modules",
+                     ".test-build"):
+            safe_path(self.path, name, must_exist=False)
+        git(self.path, "checkout", "-f", "--detach", base)
+        args = ["clean", "-ffdx"]
+        for cache in CACHES:
+            args.extend(("-e", cache))
+        git(self.path, *args)
+
+    def prepare(self):
+        repo = Path(self.config["repo"])
+        if self.path.is_symlink():
+            raise Error("lane directory must not be a symlink")
+        if not self.state_path.exists():
+            if self.path.exists():
+                raise Error(f"refusing to adopt an unowned checkout: {self.path}")
+            write_json(self.state_path, {"repo": str(repo), "hashes": {}})
+        state = read_json(self.state_path)
+        if state["repo"] != str(repo):
+            raise Error("lane belongs to another repository")
+        if not self.path.exists():
+            git(repo, "worktree", "add", "--detach", str(self.path), self.config["base"])
+        actual = Path(git(self.path, "rev-parse", "--git-common-dir").decode().strip())
+        expected = Path(git(repo, "rev-parse", "--git-common-dir").decode().strip())
+        if (self.path / actual).resolve() != (repo / expected).resolve():
+            raise Error("lane is not a worktree of the configured repository")
+        self.reset(self.config["base"])
+        with (self.queue / "logs" / f"warm-{self.number}-{uuid.uuid4().hex}.log").open("xb") as log:
+            self.warm(log)
+
+    def warm(self, log):
+        state = read_json(self.state_path)
+        for kind, names in MANIFESTS.items():
+            h = hashlib.sha256()
+            for name in names:
+                p = safe_path(self.path, name, must_exist=False)
+                h.update(name.encode() + b"\0")
+                data = p.read_bytes() if p.exists() else b""
+                h.update(bytes([p.exists()]) + len(data).to_bytes(8, "big") + data)
+            digest = h.hexdigest()
+            present = (self.path / names[0]).exists()
+            cache = self.path / (".dart_tool" if kind == "flutter" else "functions/node_modules")
+            if present and (state["hashes"].get(kind) != digest or not cache.is_dir()):
+                command = ["flutter", "pub", "get"] if kind == "flutter" else ["npm", "ci"]
+                command[0] = executable(command[0], self.path)
+                cwd = self.path if kind == "flutter" else self.path / "functions"
+                if run_process(command, cwd, log, MAX_TIMEOUT, install=True):
+                    raise Error(f"{kind} dependency installation failed; see warm/job log")
+            state["hashes"][kind] = digest
+            write_json(self.state_path, state, replace=True)
+
+    def apply(self, patch):
+        if not patch:
+            return
+        with tempfile.TemporaryDirectory(dir=self.queue / "tmp", prefix="apply-") as td:
+            env = index_environment(self.path, td)
+            git(self.path, "read-tree", "HEAD", env=env)
+            git(self.path, "apply", "--cached", "--binary", "--whitespace=nowarn", "-", env=env, data=patch)
+            names = git(self.path, "diff", "--cached", "--name-only", "-z", env=env).split(b"\0")
+            for raw in filter(None, names):
+                name = raw.decode("utf-8")
+                safe_path(self.path, name, must_exist=False)
+                parts = tuple(p.casefold() for p in PurePosixPath(name).parts)
+                if (any(p in ("node_modules", ".dart_tool", "build", ".test-build") for p in parts)
+                        or name.casefold().startswith("functions/lib") or ".gitmodules" in parts):
+                    raise Error(f"patch may not modify caches or submodules: {name}")
+                entry = git(self.path, "ls-files", "--stage", "--", name, env=env)
+                if entry.startswith((b"120000 ", b"160000 ")):
+                    raise Error("patch may not introduce symlinks or submodules")
+        git(self.path, "apply", "--binary", "--whitespace=nowarn", "-", data=patch)
+
+    def compile_typescript(self, config, log, deadline):
+        """Resolve config without emitting, then constrain every compiler output channel."""
+        work = safe_path(self.path, "functions")
+        source = safe_path(work, config)
+        compiler = safe_path(work, "node_modules/typescript/bin/tsc")
+        name = ".test-build" if source.name == "tsconfig.test.json" else "lib"
+        output = safe_path(work, name, must_exist=False)
+        allowed = self.path.resolve() / "functions" / name
+        if output.resolve() != allowed:
+            raise Error("compiler output must stay inside the lane's allowed output directory")
+        if output.exists() and not output.is_dir():
+            raise Error("compiler output path must be a directory")
+        # Warm output trees can contain links planted by an earlier trusted command.
+        for entry in output.rglob("*"):
+            safe_path(output, str(entry.relative_to(output)))
+            if not entry.resolve().is_relative_to(allowed):
+                raise Error("compiler output path escapes the allowed output directory")
+            info = entry.stat()
+            if not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode)) or (
+                    stat.S_ISREG(info.st_mode) and info.st_nlink != 1):
+                raise Error("compiler output must contain only directories and regular files with one hard link")
+        build_info = safe_path(output, hashlib.sha256(config.encode()).hexdigest() + ".tsbuildinfo",
+                               must_exist=False)
+        if not build_info.resolve().is_relative_to(allowed):
+            raise Error("compiler build-info path escapes the allowed output directory")
+        # Cached incremental state must not skip re-emitting a deleted generated target.
+        if name == ".test-build":
+            build_info.unlink(missing_ok=True)
+        argv = [executable("node", self.path), str(compiler), "-p", str(source),
+                "--outDir", str(output), "--rootDir", str(work),
+                "--tsBuildInfoFile", str(build_info), "--noEmitOnError", "true"]
+        # TypeScript resolves JSONC, package configs and extends chains without emitting.
+        with tempfile.TemporaryFile(dir=self.queue / "tmp") as resolved:
+            code = run_process([*argv, "--showConfig"], work, log,
+                               deadline - time.monotonic(), output=resolved)
+            resolved.seek(0)
+            data = resolved.read(MAX_JOB + 1)
+        if len(data) > MAX_JOB:
+            raise Error("resolved TypeScript config exceeds the job size limit")
+        if code:
+            log.write(data)
+            return code
+        try:
+            options = json.loads(data)["compilerOptions"]
+            if not isinstance(options, dict):
+                raise ValueError("compilerOptions must be an object")
+        except (ValueError, KeyError, TypeError) as exc:
+            raise Error("installed tsc did not return a valid --showConfig result") from exc
+        for option in ("outFile", "generateTrace", "generateCpuProfile"):
+            if options.get(option):
+                raise Error(f"tsc {option} is not supported in warm lanes; remove it from the config")
+        if options.get("declaration") or options.get("composite") or options.get("declarationDir"):
+            argv.extend(("--declarationDir", str(output)))
+        return run_process(argv, work, log, deadline - time.monotonic())
+
+    def execute(self, job):
+        started = time.monotonic()
+        logfile = self.queue / "logs" / f"{job['id']}-{job.get('attempt', 0)}-{uuid.uuid4().hex}.log"
+        result = {"id": job["id"], "lane": self.number, "attempt": job.get("attempt", 0),
+                  "base": job["base"], "log_path": str(logfile.relative_to(self.queue))}
+        with logfile.open("xb") as log:
+            try:
+                patch = validate_job(job, job["id"])
+                git(self.path, "rev-parse", "--verify", job["base"] + "^{commit}")
+                self.reset(job["base"])
+                self.apply(patch)
+                validate_command(job["argv"], job["cwd"], self.path, allow_generated=True)
+                self.warm(log)
+                argv = job["argv"][:]
+                deadline = time.monotonic() + job["timeout"]
+                code = 0
+                if argv[:2] == ["node", "--test"]:
+                    outputs = [name for name in argv[2:] if generated_test(name, job["cwd"])]
+                    if outputs:
+                        # Force requested tests to be emitted by this patch, not left in a warm cache.
+                        for name in outputs:
+                            safe_path(self.path / job["cwd"], name, must_exist=False).unlink(missing_ok=True)
+                        code = self.compile_typescript("tsconfig.test.json", log, deadline)
+                if argv[:2] == ["flutter", "test"] and not any(a.startswith("--concurrency") for a in argv):
+                    argv.append("--concurrency=1")
+                if argv[:2] == ["flutter", "analyze"] and "--no-pub" not in argv:
+                    argv.insert(2, "--no-pub")
+                if argv[:2] == ["npx", "tsc"]:
+                    code = self.compile_typescript(argv[3], log, deadline)
+                if code == 0 and argv[:2] != ["npx", "tsc"]:
+                    validate_command(job["argv"], job["cwd"], self.path)
+                    argv[0] = executable(argv[0], self.path)
+                    code = run_process(argv, self.path / job["cwd"], log, deadline - time.monotonic())
+                result.update(exit_code=code if code >= 0 else 128 - code,
+                              status="timeout" if code == 124 else "finished")
+            except (Error, OSError, ValueError, subprocess.SubprocessError) as exc:
+                log.write(("\nrejected/error: " + str(exc) + "\n").encode())
+                result.update(exit_code=2, status="rejected", error=str(exc))
+                event(self.queue, "rejected", id=job["id"], reason=str(exc))
+            finally:
+                try:
+                    self.reset(self.config["base"])
+                except (Error, OSError, subprocess.SubprocessError) as exc:
+                    log.write(("\ncleanup failed: " + str(exc) + "\n").encode())
+                    result.update(exit_code=125, status="cleanup_failed", error=str(exc))
+                    write_json(self.queue / "state" / f"{self.number}.failed", {"error": str(exc)}, replace=True)
+        result["duration"] = round(time.monotonic() - started, 3)
+        try:
+            write_json(self.queue / "results" / f"{job['id']}.json", result)
+        except FileExistsError:
+            event(self.queue, "stale_result_preserved", id=job["id"])
+        (self.queue / "running" / f"{job['id']}.json").unlink(missing_ok=True)
+
+
+def reject(queue, path, reason):
+    event(queue, "rejected", file=path.name, reason=reason)
+    if ID.fullmatch(path.stem):
+        logfile = queue / "logs" / f"{path.stem}-rejected-{uuid.uuid4().hex}.log"
+        with logfile.open("x") as f:
+            f.write("rejected: " + reason + "\n")
+        try:
+            write_json(queue / "results" / path.name, {"id": path.stem, "status": "rejected",
+                       "exit_code": 2, "duration": 0, "lane": None,
+                       "log_path": str(logfile.relative_to(queue)), "error": reason})
+        except FileExistsError:
+            pass
+    try:
+        path.rename(queue / "rejected" / f"{uuid.uuid4().hex}.json")
+    except FileNotFoundError:
+        pass
+
+
+def recover(queue, free_lanes):
+    """Requeue a dead worker only after its lane lock has been released, once."""
+    for path in sorted((queue / "running").glob("*.json")):
+        try:
+            job = read_json(path)
+            validate_job(job, path.stem)
+            if job.get("_lane") is not None and job["_lane"] not in free_lanes:
+                continue
+            if (queue / "results" / path.name).exists():
+                path.unlink()
+                continue
+            if job.get("attempt", 0) >= 1:
+                prior = list((queue / "logs").glob(f"{job['id']}-1-*.log"))
+                logfile = prior[0] if prior else queue / "logs" / f"{job['id']}-interrupted-{uuid.uuid4().hex}.log"
+                with logfile.open("ab") as log:
+                    log.write(b"\nworker interrupted twice; retry manually\n")
+                write_json(queue / "results" / path.name, {"id": job["id"], "status": "interrupted",
+                           "exit_code": 125, "lane": job.get("_lane"), "duration": 0,
+                           "log_path": str(logfile.relative_to(queue)),
+                           "error": "worker interrupted twice; retry manually"})
+            else:
+                job["attempt"] = 1
+                job.pop("_lane", None)
+                pending = queue / "jobs" / path.name
+                if pending.exists():
+                    if read_json(pending) != job:
+                        raise Error("conflicting queued recovery job")
+                else:
+                    write_json(pending, job, replace=True)
+                    event(queue, "requeued", id=job["id"])
+            path.unlink()
+        except FileNotFoundError:
+            continue
+        except (Error, OSError, ValueError, KeyError) as exc:
+            reject(queue, path, str(exc))
+
+
+def worker(queue, number, inherited_lock, job_id):
+    global LANE_LOCK
+    LANE_LOCK = inherited_lock
+    config = read_json(queue / "runner.json")
+    try:
+        if not ID.fullmatch(job_id):
+            raise Error("invalid worker job id")
+        job = read_json(queue / "running" / f"{job_id}.json")
+        validate_job(job, job_id)
+        if job.get("_lane") != number:
+            raise Error("worker requires its claimed lane")
+        Lane(queue, number, config).execute(job)
+    finally:
+        os.close(inherited_lock)
+
+
+def runner(args):
+    global LANE_LOCK
+    queue = args.queue.resolve()
+    queue_dirs(queue)
+    runner_lock = lock(queue / "runner.lock")
+    if runner_lock is None:
+        raise Error("a runner already owns this queue")
+    children = {}
+    stopping = False
+
+    def stop(_sig, _frame):
+        nonlocal stopping
+        stopping = True
+
+    previous = {s: signal.signal(s, stop) for s in (signal.SIGINT, signal.SIGTERM)}
+    try:
+        repo = args.repo.resolve()
+        if queue == repo or repo in queue.parents:
+            raise Error("queue must be outside the product repository")
+        config = {"repo": str(repo), "base": git(repo, "rev-parse", "HEAD").decode().strip(),
+                  "lanes": args.lanes, "pid": os.getpid()}
+        if (queue / "runner.json").exists():
+            old = read_json(queue / "runner.json")
+            if old["repo"] != str(repo) or old["lanes"] != args.lanes:
+                raise Error("queue repo and lane count are fixed; use a new queue for a different pool")
+        write_json(queue / "runner.json", config, replace=True)
+        prepared = set()
+        while not stopping or children:
+            free = {}
+            for number in range(args.lanes):
+                if number in children:
+                    if children[number].poll() is None:
+                        continue
+                    del children[number]
+                fd = lock(queue / "state" / f"{number}.lock")
+                if fd is not None:
+                    free[number] = fd
+            try:
+                recover(queue, set(free))
+                if stopping:
+                    time.sleep(0.1)
+                    continue
+                for number in free:
+                    if (queue / "state" / f"{number}.failed").exists():
+                        continue
+                    if number not in prepared:
+                        LANE_LOCK = free[number]
+                        try:
+                            Lane(queue, number, config).prepare()
+                        finally:
+                            LANE_LOCK = None
+                        prepared.add(number)
+                        event(queue, "lane_ready", lane=number)
+                    for path in sorted((queue / "jobs").glob("*.json")):
+                        if not ID.fullmatch(path.stem):
+                            reject(queue, path, "invalid job filename")
+                            continue
+                        target = queue / "running" / path.name
+                        if target.exists():
+                            reject(queue, path, "job is already running")
+                            continue
+                        path.rename(target)
+                        if (queue / "results" / path.name).exists():
+                            reject(queue, target, "result already exists; refusing stale job")
+                            continue
+                        try:
+                            job = read_json(target)
+                            validate_job(job, path.stem)
+                            job["_lane"] = number
+                            write_json(target, job, replace=True)
+                        except (Error, OSError, ValueError) as exc:
+                            reject(queue, target, str(exc))
+                            continue
+                        children[number] = subprocess.Popen(
+                            [sys.executable, str(Path(__file__).resolve()), "_worker", str(queue),
+                             str(number), str(free[number]), job["id"]], pass_fds=(free[number],),
+                            env=environment(), start_new_session=True)
+                        event(queue, "started", id=job["id"], lane=number, worker_pid=children[number].pid)
+                        break
+            finally:
+                for fd in free.values():
+                    os.close(fd)
+            time.sleep(0.1)
+    finally:
+        os.close(runner_lock)
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+    return 0
+
+
+def show_result(queue, result):
+    for key in ("id", "status", "exit_code", "duration", "lane", "error"):
+        if key in result:
+            print(f"{key}: {json.dumps(result[key])}")
+    if result.get("log_path"):
+        path = safe_path(queue, result["log_path"])
+        if path.parent != queue / "logs":
+            raise Error("result log must be inside queue/logs")
+        with path.open("rb") as f:
+            size = f.seek(0, os.SEEK_END)
+            f.seek(max(0, size - 16384))
+            tail = f.read().decode(errors="replace").splitlines()[-60:]
+        print(f"log_path: {json.dumps(str(path))}")
+        print(f"log_tail[{len(tail)}]: " + ",".join(json.dumps(s) for s in tail))
+
+
+def client(args):
+    queue = args.queue.resolve()
+    if queue == args.repo_dir.resolve() or args.repo_dir.resolve() in queue.parents:
+        raise Error("queue must be outside the seat worktree")
+    queue_dirs(queue)
+    argv = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
+    cwd = args.cwd or ("functions" if argv[:1] in (["npm"], ["npx"]) else ".")
+    validate_command(argv, cwd, args.repo_dir.resolve(), allow_generated=True)
+    base, patch = snapshot(args.repo_dir, args.base, queue / "tmp")
+    job_id = uuid.uuid4().hex
+    job = {"id": job_id, "base": base, "patch": base64.b64encode(patch).decode(),
+           "argv": argv, "cwd": cwd, "timeout": args.timeout, "attempt": 0}
+    validate_job(job, job_id)
+    write_json(queue / "jobs" / f"{job_id}.json", job, replace=True)
+    print(f"queued: {job_id}", file=sys.stderr, flush=True)
+    until = time.monotonic() + args.wait_timeout
+    result = queue / "results" / f"{job_id}.json"
+    while not result.exists():
+        if time.monotonic() >= until:
+            raise Error(f"result wait expired; job {job_id} remains queued/running; inspect testlane status --queue {queue}")
+        time.sleep(0.1)
+    value = read_json(result)
+    if value.get("id") != job_id or type(value.get("exit_code")) is not int:
+        raise Error("invalid job result")
+    show_result(queue, value)
+    return value["exit_code"]
+
+
+def status(queue):
+    queue = queue.resolve()
+    config = read_json(queue / "runner.json") if (queue / "runner.json").exists() else None
+    jobs = sorted((queue / "jobs").glob("*.json"))
+    running = []
+    for path in sorted((queue / "running").glob("*.json")):
+        try:
+            running.append(read_json(path))
+        except FileNotFoundError:
+            continue
+    print(f"queued: {len(jobs)}\nrunning: {len(running)}")
+    count = config["lanes"] if config else 0
+    print(f"lanes[{count}]{{lane,status,job}}:")
+    for number in range(count):
+        active = next((j for j in running if j.get("_lane") == number), None)
+        fd = lock(queue / "state" / f"{number}.lock")
+        busy = fd is None
+        if fd is not None:
+            os.close(fd)
+        state = "quarantined" if (queue / "state" / f"{number}.failed").exists() else (
+            "running" if busy else "interrupted" if active else "idle")
+        print(f"  {number},{state},{json.dumps(active['id'] if active else None)}")
+    if not config:
+        print('runner: "not started"')
+    else:
+        fd = lock(queue / "runner.lock")
+        print('runner: "running"' if fd is None else 'runner: "stopped"')
+        if fd is not None:
+            os.close(fd)
+    return 0
+
+
+class Parser(argparse.ArgumentParser):
+    def error(self, message):
+        raise Error(message + "; " + self.format_usage().strip())
+
+
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    if argv in (["-v"], ["-V"], ["--version"]):
+        print(VERSION)
+        return 0
+    if argv[:1] == ["_worker"]:
+        worker(Path(argv[1]), int(argv[2]), int(argv[3]), argv[4])
+        return 0
+    parser = Parser(description=__doc__.splitlines()[0])
+    sub = parser.add_subparsers(dest="action", required=True, parser_class=Parser)
+    p = sub.add_parser("runner", help="start a pool; SIGTERM drains active jobs")
+    p.add_argument("--repo", type=Path, required=True)
+    p.add_argument("--lanes", type=int, required=True, choices=range(1, 17))
+    p.add_argument("--queue", type=Path, required=True)
+    p = sub.add_parser("run", help="submit the worktree snapshot and wait")
+    p.add_argument("--queue", type=Path, required=True)
+    p.add_argument("--repo-dir", type=Path, required=True)
+    p.add_argument("--base", required=True)
+    p.add_argument("--cwd", choices=(".", "functions"))
+    p.add_argument("--timeout", type=float, default=900)
+    p.add_argument("--wait-timeout", type=float, default=7200)
+    p.add_argument("argv", nargs=argparse.REMAINDER)
+    p = sub.add_parser("status", help="show queue depth and lane ownership")
+    p.add_argument("--queue", type=Path, required=True)
+    try:
+        if not argv:
+            print(f"bin: {json.dumps(str(Path(__file__).resolve()))}")
+            print('description: "Run focused test snapshots in shared warm lanes"')
+            print('help: "testlane status --queue <dir>; testlane --help"')
+            return 0
+        args = parser.parse_args(argv)
+        if args.action == "runner":
+            return runner(args)
+        if args.action == "status":
+            return status(args.queue)
+        if not math.isfinite(args.wait_timeout) or args.wait_timeout <= 0:
+            raise Error("--wait-timeout must be positive and finite")
+        if not math.isfinite(args.timeout) or not 0 < args.timeout <= MAX_TIMEOUT:
+            raise Error(f"--timeout must be between 0 and {MAX_TIMEOUT} seconds")
+        return client(args)
+    except (Error, OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
+        print(f"error: {json.dumps(str(exc))}")
+        if isinstance(exc, Error) and "usage:" in str(exc) and argv[:1] and argv[0] in sub.choices:
+            print(sub.choices[argv[0]].format_help())
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

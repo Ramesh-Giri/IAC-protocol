@@ -1,3 +1,4 @@
+<!-- Defines AgentMail fleet operating rules; overseers and seats follow these alongside SPEC.md and the seat template. -->
 # AgentMail — Operational Rules
 
 **1.1 update:** [SPEC.md](SPEC.md) and [UPGRADE.md](UPGRADE.md) take precedence
@@ -321,14 +322,49 @@ The overseer puts this rule in every brief that changes code.
 
 *Revision: rule 28 added 2026-10-19.*
 
-## 29. Seats never compile or test in their own worktree in bulk; heavy work is shared and owned by the overseer
+## 29. Seats submit focused tests to shared warm lanes; the overseer owns builds and full validation
 
-Ramesh, 2026-10-19: 7-8 seats each compiled the 1,700-file Flutter app from cold, ran Flutter/Node tests and kept a ~1 GB functions/node_modules in their own worktree. On a 16 GB Mac this filled swap (6.4/7.2 GB), pushed load above 20, made tests time out at their limits, and froze unrelated apps (a game in the browser stuttered). One seat even ran a full `flutter build apk --debug` it did not need, holding ~1.4 cores of Gradle. A stale per-worktree `node_modules` also caused a phantom "missing module" failure that looked like a code bug.
+Ramesh, 2026-10-19: cold Flutter compilation and duplicated Node installs in 7-8 seat worktrees exhausted a 16 GB Mac and caused stale-dependency failures.
+`agentmail/bin/testlane` keeps a bounded pool of dedicated warm checkouts so seats share compilation and dependency caches.
 
-- **Seats run only focused tests, through the shared lanes.** Until the `testlane` runner is live, that means `heavy.sh` with the smallest test-file list that proves the change. When `testlane` is live, seats submit `testlane run` jobs instead and never compile in their own worktree.
-- **Seats never build apps** (no `flutter build apk/ipa/web`, no Gradle) **and never run the full analyzer gate or full suites.** The overseer builds the app and runs the full gate and suites once per merge. A brief may say "deliver and let the overseer validate" when lanes are busy; the seat then marks unrun checks honestly.
-- **Cap concurrent seats at about 5 on this Mac.** Past that, swapping makes everyone slower; queue the rest and start them as seats finish. Prefer Codex Cloud (no local RAM) for read-only reviews and audits once its environment exists.
-- **The overseer checks the machine, not just the seats**: `sysctl vm.swapusage` and load before launching, and kills orphaned build daemons (Gradle/Kotlin) it or seats left behind.
-- Every brief that touches code carries this rule.
+- **Seats submit focused tests with `testlane run`.**
+  Use `testlane run --queue <shared-queue> --repo-dir <seat-worktree> --base <review-base> -- <argv...>` with the smallest explicit test-file list that proves the change.
+  The client snapshots tracked changes and nonignored untracked files, including binary files, without writing the seat's index or object store.
+  `npm test`, `npm run build` and `npx tsc -p <config>` use `functions/`; other commands default to the repository root, with `--cwd functions` available for Node tests.
+  A queue wait expiry leaves the submitted job intact; inspect `testlane status --queue <shared-queue>` before submitting again.
+- **The overseer starts and stops the runner outside seat sandboxes.**
+  Start `testlane runner --repo <product-repo> --lanes 4 --queue <shared-queue>` from a trusted environment with Flutter, Node, npm, Python 3 and git installed.
+  Grant seats write access to the queue, then publish its absolute path in task briefs.
+  The runner creates and owns only `<shared-queue>/lanes/<n>` detached git worktrees; it never leases or changes treehouse pools.
+  SIGTERM/SIGINT stop intake and drain active jobs; restarting the same queue resumes its pool.
+  A surviving worker retains its lane lock across a runner crash; a dead worker's job is retried once after the lane is free.
+  `testlane status --queue <shared-queue>` shows queue depth, running jobs and quarantined lanes.
+- **Warm caches survive each reset.**
+  The runner preserves `node_modules/`, `.dart_tool/`, `build/`, `functions/lib*` and `.test-build/`, cleans other generated files, and reinstalls only the dependency group whose manifest/lock hash changed or whose cache is missing.
+  Initial warmup runs `flutter pub get` and `npm ci` in `functions/`.
+  Full logs and immutable per-job results live under the queue.
+- **The runner accepts only an explicit command allowlist.**
+  Supported forms are `flutter test --no-pub <paths...>` (concurrency 1), `flutter analyze <paths...>`, `python3 tool/analyzer_gate.py`, `npm test`, `npm run build`, `npx tsc -p <config>` and `node --test <files...>`.
+  Paths must stay inside the lane and may not traverse symlinks; shell strings, arbitrary flags, app builds and dependency-install jobs are rejected and logged.
+  TypeScript uses the lane's installed compiler directly, so npx cannot install a missing package.
+  Both runner-managed TypeScript paths first resolve JSONC and inherited configs with `tsc --showConfig`, then pin `rootDir` to `functions/` and all emission paths with runner-owned CLI flags.
+  A config named `tsconfig.test.json` emits under `functions/.test-build/`; other explicit TypeScript configs emit under `functions/lib/`, preserving paths relative to `functions/`.
+  Declarations and incremental build-info files stay in that same output directory, and `noEmitOnError` prevents emission from invalid source roots.
+  Output directories and their existing contents must resolve inside that fixed directory, without symlinks, special files or regular files with multiple hard links.
+  Configured `outFile`, `generateTrace` and `generateCpuProfile` outputs are unsupported and rejected before compilation, including values inherited through `extends`.
+  Other command forms also reject caller-supplied output-path flags.
+  Focused Node targets under `functions/.test-build/` are compiled with `tsconfig.test.json` in the same job and lane, sharing the test timeout.
+  Those generated targets may be absent in the seat; the runner removes the requested cached output files first and requires the current patch to emit them again.
+  Test-config compiles also discard their fixed incremental build-info file so TypeScript cannot skip recreating a deleted generated target.
+  This controls command submission and runner-managed compiler output paths; it is not a host filesystem sandbox.
+  Test code, npm scripts and dependency manifests still require review and trust because they and installation hooks execute with the runner user's host permissions, including access beyond their lane.
+- **Seats never build apps** (apk/ipa/web or Gradle) **and never run the full analyzer gate or full suites.**
+  The overseer builds the app and runs full validation once per merge.
+  When lanes are busy, a brief may permit delivery with unrun checks stated honestly.
+  Existing `heavy.sh` remains unchanged during migration; the overseer explicitly announces the switch to the shared queue.
+- **Cap concurrent seats at about 5 on this Mac.**
+  The overseer checks swap and load before launching, and cleans up only its identified orphaned build processes.
+  Queue additional seats and use remote review capacity when available.
+- Every brief that touches code carries this rule and the shared queue path.
 
-*Revision: rule 29 added 2026-10-19 (interim; the `testlane` tool, task testlane-1019, will replace the heavy.sh wording).*
+*Revision: rule 29 added 2026-10-19; updated 2026-10-19 for task testlane-1019 with shared warm runner/client lanes.*

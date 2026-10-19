@@ -1,3 +1,4 @@
+<!-- Teaches non-Claude CLI agents their mail seat, reporting duties and shared test-lane workflow; used by fleet launchers and overseers. -->
 # AgentMail seat instructions — template
 
 For non-Claude CLI agents (Codex, Gemini CLI, …), drop this — edited — into
@@ -71,8 +72,14 @@ before acting. Messages have a `type:` — `proposal` asks for your verdict
   what the file is for, then main classes/functions, dependencies, users and
   side effects. Keep existing headers true when behaviour changes. Never add
   headers in bulk to files you did not otherwise change.
-- **Machine budget (OPERATIONAL_RULES rule 29).** Run only focused tests for
-  what you changed, through the shared lanes (heavy.sh, or `testlane run`
-  once live). Never build apps (apk/ipa/web, Gradle) and never run the full
-  analyzer gate or full suites: the overseer does that once per merge. If
-  lanes are busy, deliver and mark unrun checks honestly.
+- **Machine budget (OPERATIONAL_RULES rule 29).** Submit focused tests with
+  `<path>/agentmail/bin/testlane run --queue <shared-queue> --repo-dir <seat-worktree> --base <review-base> -- <argv...>`.
+  Use explicit test paths; Flutter tests require `--no-pub` and run at concurrency 1.
+  Node package commands use `functions/` automatically; Node file tests can use `--cwd functions`.
+  Node tests in `functions/.test-build/` compile from your patch inside the same lane and job; generated files need not exist in your seat.
+  The client includes tracked edits and nonignored untracked files without changing your git index or object store.
+  Never compile in your own worktree, build apps (apk/ipa/web or Gradle), or run the full analyzer gate or full suites.
+  The overseer starts/stops the warm runner and does builds and full validation once per merge.
+  Check `testlane status --queue <shared-queue>` when waiting; a client wait expiry does not cancel its job.
+  If lanes are busy, deliver and mark unrun checks honestly.
+  Keep using the existing `heavy.sh` workflow until the overseer announces migration and supplies the queue path.
