@@ -12,6 +12,9 @@ Emits one line per problem:
     CODEX-UNREAD <seat> unread=<n>   idle Codex seat with unread mail (Codex does not wake on mail)
     OVERSEER-UNREAD <n>              overseer has unread mail older than 2 minutes
     GONE <seat>                      a titled pane disappeared
+    HIDDEN ...                       no terminal is attached, or it shows a window other than the seats window
+    ORPHAN-WATCH <seat> pid=<n>      a mail-watch is alive for a seat whose agentmail-run is gone
+    STRAY-PANE <pane> ...            a pane in the seats window that is neither a seat nor the holder
 
 Added 2026-09-14 after the overseer twice left finished or waiting seats idle
 (Ramesh: "you're forgetting things").
@@ -54,9 +57,34 @@ PROMPTS = ("do you want to proceed", "yes, i trust", "trust this folder", "enter
            "allow once", "approve this", "press enter to continue", "waiting for approval",
            # Claude Code selection dialogs, e.g. the Opus 5 "Model switch" safeguard prompt
            # that blocked two security seats (2026-09-15, 2026-09-16) with no alert.
-           "enter to select", "model switch", "safeguards flagged")
+           "enter to select", "model switch", "safeguards flagged",
+           # Codex re-asks after any plugin hook changes (claude-mem upgrade froze 3 seats, 2026-10-20).
+           "hooks need review")
 idle_since, last_emit, last_codex, seen = {}, {}, {}, set()
 last_sig, last_stuck, last_prompt, last_dialog = {}, {}, {}, 0.0
+last_hygiene = 0.0
+
+def hygiene():
+    """Ramesh could not see any seat for a whole session (2026-10-20): the only Terminal
+    client showed fleet:1 (holder) while seats ran in fleet:2, beside a forgotten
+    'sleep 86400' pane, and two mail-watch processes from seats closed 3-4 days earlier
+    were still running. Each of these is invisible from inside the overseer, so check them here."""
+    session, _, _ = a.window.partition(":")
+    target = sh("tmux", "display-message", "-p", "-t", a.window, "#{window_id}").strip()
+    views = [l.split("|") for l in sh("tmux", "list-clients", "-t", session, "-F", "#{client_tty}|#{window_id}").splitlines()]
+    if not views:
+        print(f"HIDDEN no terminal is attached to session {session}: Ramesh sees no seats (open agentmail/bin/fleet-attach-fleet.command)", flush=True)
+    elif target and all(w != target for _, w in views):
+        print(f"HIDDEN the attached terminal shows another window, not {a.window}: join the seats into the viewed window or select-window", flush=True)
+    for line in sh("tmux", "list-panes", "-t", a.window, "-F", "#{pane_id}|#{pane_title}").splitlines():
+        pane, _, title = line.partition("|")
+        title = re.sub(r"^[^A-Za-z0-9]+", "", title).strip()
+        if title != "fleet-holder" and not os.path.isdir(os.path.join(a.root, title)):
+            print(f"STRAY-PANE {pane} title={title!r} in {a.window}: not a seat or the holder; kill it if nothing needs it", flush=True)
+    for line in sh("pgrep", "-fl", "mail-watch").splitlines():
+        m = re.search(r"mail-watch (\S+)", line)
+        if m and m.group(1) != a.overseer and not runner_alive(m.group(1)):
+            print(f"ORPHAN-WATCH {m.group(1)} pid={line.split()[0]}: seat is closed; kill the watcher", flush=True)
 while True:
     now = time.time()
     # macOS GUI dialogs (Gatekeeper "downloaded from the internet", permission asks) are
@@ -68,6 +96,9 @@ while True:
     if wins and now - last_dialog >= 300:
         print("MACOS-DIALOG CoreServicesUIAgent is up: a Gatekeeper/permission dialog may be blocking a seat (tell Ramesh what to click, then fix the cause)", flush=True)
         last_dialog = now
+    if now - last_hygiene >= a.repeat * 60:
+        hygiene()
+        last_hygiene = now
     current = set()
     for line in sh("tmux", "list-panes", "-t", a.window, "-F", "#{pane_id}|#{pane_title}").splitlines():
         pane, _, title = line.partition("|")
