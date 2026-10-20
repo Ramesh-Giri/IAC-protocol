@@ -381,3 +381,14 @@ The overseer had not armed `fleet-guard`, so nothing reported any of it.
 - **No placeholder panes.** Never keep a window alive with a `sleep` pane; the holder pane exists for that. Any pane in the seats window that is not a seat or `fleet-holder` is a defect.
 - **Closing a seat kills three things:** the `agentmail-run --seat <seat>` process, its pane, and any `mail-watch <seat>` process; then `treehouse return` the lease (rule 21).
 - **Arm `fleet-guard --window fleet:seats` as a persistent Monitor at session start**, next to the inbox watcher. It now also emits `HIDDEN` (no viewer, or the viewer shows another window), `STRAY-PANE`, `ORPHAN-WATCH`, and `PROMPT` for the Codex "Hooks need review" dialog. Act on every line.
+
+## 31. The overseer does no legwork: a standing integrator seat merges, the overseer stays free to talk
+
+Ramesh, 2026-10-20 (4th time): "why are u performing tasks on ur own? dind i ask u to allocate to subagents and stay free for me".
+The overseer's whole job is to talk to Ramesh, decide, write briefs, launch and close seats, and read verdicts.
+It does not commit, merge, resolve conflicts, run tests, refresh fixtures or hashes, regenerate the project map, import workbook rows, push, or edit any project file - not even "just this once".
+All of that goes to a standing integrator seat per active repo (Codex by default), launched at session start and kept for integration only.
+The integrator receives `merge` mail (branch, verdict mail id, worktree lease) and does: commit a sandbox-blocked author worktree, merge to the integration branch, resolve conflicts keeping every side's intent, run the focused post-merge checks named in the verdict, refresh pinned hashes, regenerate the project map (rule 28), import PENDING workbook rows, push, return the lease, and mail MERGED with SHAs and test counts.
+The integrator is the one seat exempt from rule 11's one-task-per-seat closure; it is closed when its repo's merge queue is empty at session end.
+The overseer may run a check of a few seconds only when the answer decides a dispatch or a safety call.
+If the overseer catches itself running a second legwork command in a row, it stops and writes a brief instead.
