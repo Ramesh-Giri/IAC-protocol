@@ -368,3 +368,16 @@ Ramesh, 2026-10-19: cold Flutter compilation and duplicated Node installs in 7-8
 - Every brief that touches code carries this rule and the shared queue path.
 
 *Revision: rule 29 added 2026-10-19; updated 2026-10-19 for task testlane-1019 with shared warm runner/client lanes.*
+
+## 30. Ramesh must SEE every seat: one viewed window, no strays, no orphans
+
+On 2026-10-20 Ramesh asked "where are all the subagents? why can't I see them?" for a whole session of four seats.
+The only Terminal.app client was attached to `fleet:1` (the holder window) while every seat was split into a separate `fleet:2 seats` window that nobody was looking at.
+That window also held a forgotten `sleep 86400` pane, and two `mail-watch` processes from seats closed three and four days earlier were still running.
+The overseer had not armed `fleet-guard`, so nothing reported any of it.
+
+- **One window.** The holder pane and every seat pane live in the SAME window, the one the Terminal client is showing (`fleet:seats`, index 1). Never create a second seats window; if one exists, `join-pane` the holder into it and `move-window` it to index 1.
+- **Verify the viewer, not the session.** After every launch or close, `tmux list-clients` must show a Terminal.app client on the seats window (trace the client pid up to Terminal.app, per "Know where you are running"). A session marked "attached" proves nothing about which window is on screen.
+- **No placeholder panes.** Never keep a window alive with a `sleep` pane; the holder pane exists for that. Any pane in the seats window that is not a seat or `fleet-holder` is a defect.
+- **Closing a seat kills three things:** the `agentmail-run --seat <seat>` process, its pane, and any `mail-watch <seat>` process; then `treehouse return` the lease (rule 21).
+- **Arm `fleet-guard --window fleet:seats` as a persistent Monitor at session start**, next to the inbox watcher. It now also emits `HIDDEN` (no viewer, or the viewer shows another window), `STRAY-PANE`, `ORPHAN-WATCH`, and `PROMPT` for the Codex "Hooks need review" dialog. Act on every line.
