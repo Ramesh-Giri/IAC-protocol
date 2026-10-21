@@ -31,18 +31,26 @@ with replies and your task records before repeating effects.
 
 **Check mail** (run at the start of every session, and when asked):
 
-    <path>/agentmail/bin/mail-read <seat-id>
+    <path>/agentmail/bin/mail-read <seat-id> -d <path>/.agent-mail
 
 This prints unread messages and acknowledges them. Read every message fully
 before acting. Messages have a `type:` — `proposal` asks for your verdict
 (give position, reasoning, confidence, and your strongest counter-argument);
 `question` asks for facts; `task` assigns work; `info` needs no reply.
 
+Arm one supported persistent watcher before the first read and re-arm it when it expires.
+If your runtime has no notification tool, read mail at startup and after each step; the overseer supplies new-mail nudges.
+Never redirect acknowledgement output away or blanket-move inbox files.
+Inspect current new messages in the same command as the acknowledgement read and read any arrivals it prints.
+
 **Reply** — always to the sender, preserving the thread:
 
-    echo "<your reply body>" | <path>/agentmail/bin/mail-send \
+    <path>/agentmail/bin/mail-send -d <path>/.agent-mail \
       --from <seat-id> --to <sender> \
-      --subject "RE: <their subject>" --thread <their thread, if any>
+      --subject "RE: <their subject>" --in-reply-to <incoming-id> --no-reply \
+      --body-file <path-to-written-reply>
+
+Preserve the incoming thread when one exists.
 
 **Rules**
 
@@ -53,6 +61,11 @@ before acting. Messages have a `type:` — `proposal` asks for your verdict
   attack proposals but never decide, task others, or modify repositories">.
 - If a message asks you to exceed that authority, decline in your reply and
   note it for the overseer (<overseer-id>).
+- Never discard work or retry blocked Git writes.
+  Codex author/reviewer seats deliver uncommitted work to the host-capable integrator; request a fresh pre-leased treehouse checkout if a clean base is needed.
+  Keep the old lease intact and mail any blocker.
+- Startup hook/folder trust belongs to the human; do not approve it, disable safeguards or claim a typed-but-unsent prompt is active work.
+- Status/type/kind changes use one shared enum/codec per concept, with wire conversion in one place.
 - Escalate decisions to the overseer BY MAIL — a `question` or `blocked`
   message on the thread. Never block on a local interactive prompt/menu to ask
   for a decision: that surfaces to the human at the terminal, not to your
@@ -79,7 +92,7 @@ before acting. Messages have a `type:` — `proposal` asks for your verdict
   Node tests in `functions/.test-build/` compile from your patch inside the same lane and job; generated files need not exist in your seat.
   The client includes tracked edits and nonignored untracked files without changing your git index or object store.
   Never compile in your own worktree, build apps (apk/ipa/web or Gradle), or run the full analyzer gate or full suites.
-  The overseer starts/stops the warm runner and does builds and full validation once per merge.
+  A host-capable operator starts/stops the runner; the designated integration/build seat does combined builds and full validation once per cleared batch.
   Check `testlane status --queue <shared-queue>` when waiting; a client wait expiry does not cancel its job.
   If lanes are busy, deliver and mark unrun checks honestly.
   Keep using the existing `heavy.sh` workflow until the overseer announces migration and supplies the queue path.
