@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "example": true,
+  "projects": [
+    {
+      "folder": "web",
+      "remote": "https://github.com/EXAMPLE-ORG/web.git",
+      "default_branch": "main",
+      "working_branch": "main",
+      "purpose": "Example public frontend; replace with approved inventory.",
+      "deploy_target": {
+        "hosting": "Vercel",
+        "owner": "EXAMPLE-TEAM",
+        "production_branch": "main"
+      },
+      "private": true,
+      "access": "Request repository read access and separate deployment access.",
+      "bootstrap": true
+    },
+    {
+      "folder": "api",
+      "remote": "https://github.com/EXAMPLE-ORG/api.git",
+      "default_branch": "main",
+      "working_branch": "development",
+      "purpose": "Example backend; default and working branches may differ.",
+      "deploy_target": {
+        "hosting": "Firebase",
+        "project_id": "EXAMPLE-PROJECT"
+      },
+      "private": true,
+      "access": "Request repository read access; cloud operations are human-only.",
+      "bootstrap": true
+    }
+  ]
+}

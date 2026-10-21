@@ -1,6 +1,7 @@
-# IAC picks the model from declared runtimes - design and measurement (modelpick-0927-x2q5)
+<!-- Research design and historical evaluation findings; public readers use this alongside the sanitized dataset and scores. -->
+# IAC picks the model from declared runtimes - design and measurement
 
-Seat: research-modelpick-0927-ramesh.
+Seat: example-research-seat.
 Date: 2026-09-27.
 Status: design and measurement only. Nothing in `agentmail-launch`, `roster.json`, fleet tooling or
 any product repo was changed. No GCP, no Cloud Run call, no gcloud, no SSH.
@@ -8,18 +9,14 @@ Laya inference ran locally on CPU from the cached checkpoint
 (`~/.cache/huggingface/hub/models--convaiinnovations--laya`), in a throwaway venv outside the repo.
 Work done in a treehouse worktree, never a hand-rolled `git worktree add`.
 
-This task supersedes nothing in `layaroute-0926-f9k3`
-(`agentmail/research/layaroute/DESIGN.md`, branch `research/layaroute-0926`, commit `a8a9ba9`) - it
-asks a different question (match task against a declared catalogue, not imitate the overseer's past
-picks) and its own verdict was NO-GO on the question it asked. I read it in full. Its measurements
-still bind and I re-checked the two load-bearing ones on today's roster before relying on them (see
-"Still true today", below). I did not re-run its full pipeline; I ran new experiments that this task
-specifically asks for: signal-level Laya framings (not just kind), and local catalogue verification
-(not web search).
+This study complements an earlier task-kind classification study.
+It asks a different question: match a task against a declared catalogue rather than imitate historical model selections.
+The earlier study did not support using its classifier as a routing gate.
+Its measurement limits still apply; the checks below add signal-level framings and local catalogue verification without rerunning that entire pipeline.
 
 ## Verdict
 
-**Build the architecture Ramesh described, with Laya inside it exactly where the overseer's brief
+**Build the architecture the operator described, with Laya inside it exactly where the overseer's brief
 placed it: a kind-plus-signal reader, never a model-namer.** Do not train it - there is nothing to
 train it ON. Do not let it gate the hard rule - it is not accurate or stable enough, measured two
 different ways now. Build the catalogue and the deterministic matcher first; they are useful with
@@ -106,7 +103,7 @@ hard rules, applied one layer down to catalogue trust.
 Checked, not assumed: I cross-referenced today's roster (241 seats) against both caches
 (`catalogue_check.py`, run 2026-09-27T05:51Z, output in `catalogue_check_output.txt`). Result: **two
 live roster seats are pinned to `gpt-5.3-codex-spark`, a model id absent from today's
-`models_cache.json`** (`research-token-efficiency-ramesh`, `skyzai-tasks-plan-codex-ramesh`). That id
+`models_cache.json`** (`sample-seat-023`, `sample-seat-035`). That id
 was verified-working on 2026-09-12 per `model-lineup-and-task-sizing` memory; nine days later it is
 gone from the account's own list, and two roster entries still point at it today. **Nobody would
 have noticed until a launch failed** - the roster carries no mechanism that would have caught this on
@@ -162,7 +159,7 @@ task text + brief
 3. **Matcher**: a lookup table (kind, blast-radius, host-tool-flag, author-runtime) -> ordered
    candidate list of catalogue entries, same as the prior seat's proposal. This is the piece with the
    least measurement risk - it's a table, testable exhaustively, and it's where a human's judgement
-   (Ramesh's) is supposed to live, encoded rather than re-derived every time.
+   (the operator's) is supposed to live, encoded rather than re-derived every time.
 4. **Hard-rule filter, last, veto-only.** Unchanged from the prior seat's design; still correct;
    re-justified below with fresh evidence that it is not enforced anywhere today.
 5. **Headroom**: reads a CACHED `fleet-usage` snapshot, never calls it in the launch path (that probe
@@ -188,8 +185,7 @@ direct binary question has less to get wrong than a 4-or-9-way pick.
 > with a better prompt; an instability driven by string order cannot be prompted away.
 
 **Method.** Two `choice` questions, each yes/no, wording fixed before running (no tuning - the same
-discipline the prior seat used, and the same discipline the LAYA_TODO_DETECTOR_STATE incident argues
-for): "Does this task involve security testing, a security audit, penetration testing, exploit work,
+discipline the prior study used to avoid tuning against observed outcomes): "Does this task involve security testing, a security audit, penetration testing, exploit work,
 or a security fix?" and "Is this task read-only, meaning it must not change any code (a review, a
 plan, research or a measurement)?". Each run twice, option order forward and reversed (order is a
 known bias lever for Laya's choice head - the prior seat found a 5-point swing on kind; I wanted to
@@ -227,16 +223,12 @@ confidence floor into the matcher's ranking, structurally excluded from the hard
 must stay regex-and-table, deterministic, last, unit-tested exhaustively - unchanged from the prior
 design.
 
-## Still true today, re-checked rather than assumed
+## General enforcement lessons
 
-- **The hard rule is still unenforced.** `skyzai-sec-audit-ramesh` (description: "Full Cloudflare
-  security-audit skill run, backend + rules, report only") is `claude-opus-5` in today's
-  `roster.json`, checked 2026-09-27. This is the same live violation the prior seat found on
-  2026-09-26; it has not been fixed in the day between. A deterministic filter that runs on every
-  launch would have caught it both times; a Laya gate at the measured recall would have had roughly
-  a 30-44% chance of missing it depending on phrasing.
-- **A dead model id is live in the roster right now** (previous section) - new evidence this task's
-  scrutiny of "discovery" surfaced that the prior task didn't need to look for.
+- **A deterministic policy filter remains necessary.** A task's security and review requirements must be checked against the configured runtime policy on every launch.
+  The measured security recall below 0.71 cannot establish reliable enforcement.
+- **Catalogue verification remains necessary.** Compare configured model IDs with the dated runtime cache and report absent IDs before launch.
+  Historical availability findings do not establish present account entitlement.
 
 ## Enforcement design for the hard rules (unchanged from the prior seat, re-justified)
 
@@ -300,14 +292,14 @@ risk, already-proven-useful first step:
    runtimes and flagging roster/cache mismatches. This is smaller than the prior seat's "decision
    log" proposal and has zero design risk.
 2. **The decision log + deterministic hard-rule guard** (prior seat's proposal, unchanged, still
-   correct) - would have caught the still-live Opus/security-audit seat both times it was checked.
-3. **Laya in shadow mode**, 3-4 weeks, only if Ramesh still wants the evidence after (1) and (2) are
+   correct) - checks configured runtime restrictions independently of classifier output.
+3. **Laya in shadow mode**, 3-4 weeks, only if the operator still wants the evidence after (1) and (2) are
    running - unchanged from the prior recommendation, because nothing measured here moves that
    verdict.
 
 ## Recommendation
 
-1. **Ramesh's target ("the right model chosen per task, from the models I said I have") is
+1. **the operator's target ("the right model chosen per task, from the models I said I have") is
    achievable, and the architecture in his own brief is the right shape** - Laya reads the task,
    never the models; a catalogue holds the models with dated, sourced claims; a matcher joins them; a
    deterministic filter has final say. Build that.
@@ -318,10 +310,8 @@ risk, already-proven-useful first step:
    dated, authoritative, machine-readable list of what THIS account can actually call
    (`~/.codex/models_cache.json`, `~/.claude/cache/model-catalog/*.json`). Web search and curated
    memory are still needed for price and "good at X", but those claims must carry a source and a
-   date and must never gate whether a model is offered - only the local cache does that. Two live
-   findings surfaced by that check right now: a dead Codex model id on two roster seats, and the
-   Opus-on-security-audit rule violation persisting from the prior study to today. Both are reported
-   to the overseer separately, not fixed here.
+   date and must never gate whether a model is offered - only the local cache does that.
+   Historical findings motivate checking configured model availability and applying deterministic runtime policy independently of classifier scores.
 4. **Laya is not accurate or stable enough to gate the hard rule**, tested two ways now (kind
    classification, and direct binary signal framing) - security recall never clears ~0.7, and a
    binary signal's own recall swings 28 points on option order alone. Keep it strictly downstream of
@@ -351,10 +341,8 @@ risk, already-proven-useful first step:
 `eval_signals.py` (the two-signal experiment), `signals_results.json` (raw per-seat probabilities),
 `catalogue_check.py` (the throwaway research prototype of the roster-vs-cache cross-reference,
 kept as the record of what was measured for this design), `catalogue_check_output.txt` (its output
-as run 2026-09-27T05:51Z), `dataset.json` (copied from the prior seat's `layaroute` branch, commit
-`a8a9ba9`, unchanged - same 230-seat, hand-reviewed dataset, so the two studies are directly
-comparable).
-Re-run: `pip install laya==0.3.20` in a throwaway venv (`HF_HUB_OFFLINE=1`), then
+as run 2026-09-27T05:51Z), `dataset.json` (publicly sanitized records from the same historical study; see the privacy note below).
+For a new experiment on the sanitized summaries: `pip install laya==0.3.20` in a throwaway venv (`HF_HUB_OFFLINE=1`), then
 `python3 eval_signals.py`; `python3 catalogue_check.py` needs no install, reads only local cache
 files and `roster.json`.
 
@@ -363,4 +351,20 @@ files and `roster.json`.
 MAIL_ROOT` like every other `agentmail/bin` script). It is read-only - reports mismatches, edits
 nothing - and returns a non-zero exit on any mismatch or unreadable catalogue, so it can be folded
 into `rollcall` or a periodic check. Run it: `agentmail/bin/catalog-check -d
-/Users/darkness/Work/Aureus/.agent-mail`.
+$IAC_ROOT/.agent-mail`.
+
+
+## Public dataset privacy and reproducibility
+
+Seat and project identifiers are neutral placeholders, consistent across the dataset and signal results.
+Task descriptions are neutral summaries retaining broad engineering topics and task roles.
+The dataset and signal-result JSON use neutral identifiers and summaries in place of private dispatch descriptions.
+This statement applies only to those two JSON artifacts; it is not a public-safety claim for this design, supporting scripts, fixtures, generated output, or Git history.
+Remaining and corrected exposure locations are recorded in `../../PUBLIC_EXPOSURE_FOLLOWUP.md`.
+Dates, runtime/model assignments, kind labels, standing flags, truth labels, record order, and measured probabilities are retained.
+The 236 dataset records include six standing records; each of the four signal runs contains the same 230 evaluated records.
+These artifacts support analysis of the historical probabilities and labels, including confusion matrices and comparisons between prompt orders.
+The scores were measured on the original private text, not on these public summaries.
+Running the evaluator on the summaries creates a new experiment and cannot reproduce the historical per-record scores.
+Do not use summaries as verbatim evidence of private tasks or as an independent validation of the original annotations.
+Historical roster/cache observations above describe the study date, not current account availability or current operating policy.

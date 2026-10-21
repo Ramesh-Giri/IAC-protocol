@@ -15,14 +15,14 @@ one agent** and children work autonomously while remaining visible in the termin
 Use [SUPERVISOR_BOOTSTRAP.md](SUPERVISOR_BOOTSTRAP.md) for the current main-agent launch and capability checks.
 The supervisor needs a supported approval path for host management; unattended child settings must not be reused blindly for the parent.
 Visible terminal identity, process control and an AgentMail round trip are acceptance evidence, not implied capabilities.
-The current Ramesh site requires separate visible Terminal.app child windows and the main in his own terminal application.
+The reference macOS layout places all seats and the holder together in one viewed `fleet:1` window named `seats`, with the main in the human's own terminal.
+Rule 30 in [OPERATIONAL_RULES.md](OPERATIONAL_RULES.md) supersedes older separate-window advice.
 
 ## 1. Roles
 
 ### The parent (supervisor)
-- Runs on the **strongest available model** (e.g. `claude-fable-5`) — it does
-  the thinking that is expensive to get wrong: decomposition, allocation,
-  review, and judgment calls.
+- Uses an explicitly approved model from the verified local catalog for decomposition, allocation and judgment.
+  Do not assume an old example model remains available or is the current default.
 - Runs in **normal permission mode** — the user sees and approves its
   actions. It is the single human-facing surface.
 - Owns the roster: which agents exist, which repo and model each gets.
@@ -33,7 +33,9 @@ The current Ramesh site requires separate visible Terminal.app child windows and
   forwards the consequential ones to the user.
 
 ### Children (workers)
-- One per repository. A child NEVER edits outside its repo — repo ownership
+- One task per author/reviewer seat, with distinct leased worktrees for concurrent work on the same repository.
+  A standing integrator per active repo handles integration (rules 21/31).
+  A child NEVER edits outside its repo - repo ownership
   is the isolation boundary, like actor state.
 - Run with normal runtime permissions by default. Unattended permission
   bypass requires explicit authorization and separately verified runtime/OS
@@ -78,12 +80,13 @@ chaperone.
 The parent assigns models per project — and may override per task. The
 principle: **pay for judgment, not for typing.**
 
-| Tier | Example model | Assign to |
-|---|---|---|
-| Frontier | `claude-fable-5` | The parent itself; rare "hard problem" tasks explicitly delegated with a model override |
-| Strong | `claude-opus-4-8` | Children owning complex, high-blast-radius repos (payments, contracts, infra) |
-| Balanced | `claude-sonnet-5` | Children doing routine feature work in well-tested codebases |
-| Fast | `claude-haiku-4-5` | Mechanical bulk work: renames, codemods, doc formatting, test scaffolds |
+| Work | Selection |
+| --- | --- |
+| Supervisor / hard design judgment | Approved reasoning model with adequate runtime headroom |
+| Author / independent reviewer | Approved workhorse appropriate to the task's blast radius and required tools |
+| Mechanical work | Smaller approved model only where it can reliably complete the tools and checks |
+
+The current roster and operating-rule routing update take precedence over historical model examples.
 
 Rules of thumb:
 - Allocation lives in `roster.json` (`model` field); a `task` message MAY
@@ -109,6 +112,11 @@ user request
 A `task` message MUST contain: objective, acceptance criteria the child can
 self-check, boundaries (what NOT to touch), and where to report. Underspec'd
 tasks come back as `question` — that's the protocol working, not overhead.
+
+Reviewers independently check frozen patches; the parent decides clearance and a host-capable integrator performs the cleared Git/test/map/ledger work.
+Sandboxed authors may deliver uncommitted patches; a role or directory grant is not proof of Git-write capability.
+Batch reviewed merges into one combined local validation and one push, then check completed required CI jobs on that exact SHA.
+Cancelled/superseded jobs are not green, and a merge is not evidence of deployment.
 
 The parent tracks open tasks (its own todo list or `parent/state.md`) and
 nags: a child silent past its ETA gets a `question`; a dead session's task
@@ -157,13 +165,16 @@ migration and why" is answerable with `grep`, forever.
 
 ## 6. Spawning children
 
-At Ramesh's site, use mail-native roster seats through agentmail-run in project-named tmux sessions, with separate visible Terminal.app windows.
+Use mail-native roster seats through agentmail-run and runtime-specific launch arguments.
+For the reference macOS layout, join seat panes into the single viewed fleet window (rule 30).
 The supervisor must establish its host-control capabilities first and validate each child's runtime arguments.
 Internal managed subagents and headless processes are not substitutes for the requested visible fleet.
-The generic protocol can carry mail for other execution patterns, but using another pattern here requires Ramesh's instruction.
+The generic protocol can carry mail for other execution patterns, but using another pattern here requires the operator's instruction.
 
 Bootstrap every child with its seat ID, checkout, mail root, watcher-first instruction, task lookup and escalation boundaries.
 Require a task acknowledgement before reporting active implementation.
+Keep a single persistent watcher where the runtime supports notifications; otherwise check mail at startup and after each step and have the overseer nudge idle seats.
+Changed-hook or new-folder trust needs the human; never automate a trust keystroke.
 See OPERATIONAL_RULES.md rules 9-17 for launch, visibility and ownership verification.
 
 ## 7. The council pattern — cross-model deliberation

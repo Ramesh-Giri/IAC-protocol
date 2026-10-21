@@ -16,6 +16,14 @@
 # ── re-admit the toolkit and its front page ─────────────────────────────────
 !/.gitignore
 !/README.md
+!/ONBOARDING.md
+!/projects.example.json
+!/bin/
+!/docs/
+/docs/*
+!/docs/changes/
+/docs/changes/*
+!/docs/changes/iac-onboarding-review-fixes.md
 !/LICENSE
 !/agentmail/
 !/.github/
@@ -60,3 +68,11 @@ agentmail/**/*.pyc
 agentmail/diagram/dist/
 agentmail/**/.DS_Store
 .DS_Store
+
+# Machine/team inventory and local setup are private, even if broader ignores change.
+/projects.local.json
+/ONBOARDING.local.md
+/IAC_GAP_REPORT.local.md
+/.iac-local.env
+bin/__pycache__/
+bin/*.pyc

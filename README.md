@@ -10,6 +10,10 @@ supervision model and dashboard. You set the goals and approve important
 decisions; agents exchange implementation details, questions and evidence
 without you copying prompts between sessions.
 
+Joining a workspace that uses IAC?
+Start with [developer onboarding](ONBOARDING.md), the [example manifest](projects.example.json) and `python3 bin/iac-bootstrap --dry-run` from your clone.
+The bootstrap clones project code separately; it does not provision accounts, secrets or production access.
+
 ## Where IAC fits
 
 IAC is the coordination layer around your projects, not an application

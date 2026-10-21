@@ -1,0 +1,146 @@
+#!/usr/bin/env python3
+"""Clone or fast-forward the project manifest without replacing local work.
+
+Uses a local manifest and Git; developers invoke it during workspace setup.
+Writes only absent project checkouts or clean matching working branches.
+"""
+import argparse
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import tempfile
+
+
+class Parser(argparse.ArgumentParser):
+    def error(self, message):
+        print("error: " + json.dumps(message))
+        print('help: "Use --root PATH, --manifest PATH or --dry-run; run iac-bootstrap --help"')
+        raise SystemExit(2)
+
+
+def git(*args, cwd=None):
+    env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GCM_INTERACTIVE="never", GIT_OPTIONAL_LOCKS="0",
+               GIT_SSH_COMMAND="ssh -oBatchMode=yes")
+    return subprocess.run(
+        ["git", *args], cwd=cwd, env=env, stdin=subprocess.DEVNULL,
+        capture_output=True, text=True, timeout=120, check=True,
+    ).stdout.strip()
+
+
+def load_projects(path):
+    data = json.loads(path.read_text())
+    if not isinstance(data, dict) or data.get("version") != 1 or not isinstance(data.get("projects"), list):
+        raise ValueError("expected version 1 and a projects array")
+    seen = set()
+    for project in data["projects"]:
+        if not isinstance(project, dict):
+            raise ValueError("each project must be an object")
+        if not isinstance(project.get("bootstrap", True), bool):
+            raise ValueError("bootstrap must be a boolean")
+        if not project.get("bootstrap", True):
+            note = project.get("setup_note")
+            if not isinstance(note, str) or not note.strip():
+                raise ValueError("manual projects require a nonempty setup_note")
+        folder = project["folder"]
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*(/[A-Za-z0-9][A-Za-z0-9_-]*)*", folder):
+            raise ValueError("project folders must be relative directory names")
+        if any(folder == old or folder.startswith(old + "/") or old.startswith(folder + "/") for old in seen):
+            raise ValueError("duplicate or overlapping project folders")
+        seen.add(folder)
+        if not re.fullmatch(r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\.git", project["remote"]):
+            raise ValueError("expected credential-free HTTPS GitHub remotes")
+        if project.get("bootstrap", True):
+            git("check-ref-format", "--branch", project["working_branch"])
+    return data
+
+
+def remote_key(remote):
+    return remote.removesuffix(".git").replace("git@github.com:", "https://github.com/").lower()
+
+
+def update_project(root, project, dry_run):
+    if not project.get("bootstrap", True):
+        return "manual", project["setup_note"]
+    target = root / project["folder"]
+    # Refuse symlinks even if they currently resolve inside the root.
+    if any(p.is_symlink() for p in (target, *target.parents) if p != root and root in p.parents):
+        return "held", "symlink destination; choose an ordinary directory"
+    branch = project["working_branch"]
+    if target.exists():
+        if not target.is_dir() or git("rev-parse", "--show-toplevel", cwd=target) != str(target):
+            return "held", "existing path is not this project's Git root"
+        if remote_key(git("remote", "get-url", "origin", cwd=target)) != remote_key(project["remote"]):
+            return "held", "origin mismatch; inspect the checkout"
+        if git("status", "--porcelain", "--untracked-files=all", cwd=target):
+            return "held", "local changes preserved; finish or use a fresh lease"
+        if git("branch", "--show-current", cwd=target) != branch:
+            return "held", "different or detached branch preserved"
+        for state in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply", "sequencer"):
+            state_path = Path(git("rev-parse", "--git-path", state, cwd=target))
+            if (target / state_path).exists():
+                return "held", "unfinished Git operation preserved"
+        if dry_run:
+            return "would_update", branch
+        git("fetch", "origin", branch, cwd=target)
+        git("merge", "--ff-only", "--no-edit", "--no-overwrite-ignore", "FETCH_HEAD", cwd=target)
+        return "updated", branch
+    if dry_run:
+        return "would_clone", branch
+    # Failed clones never leave a half-created project at the intended path.
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".iac-clone-", dir=target.parent) as staging:
+        checkout = Path(staging) / "checkout"
+        git("clone", "--branch", branch, "--", project["remote"], str(checkout))
+        if target.exists() or target.is_symlink():
+            return "held", "destination appeared during clone; preserved"
+        checkout.rename(target)
+    return "cloned", branch
+
+
+def main():
+    parser = Parser(
+        description="Clone or fast-forward local project inventory inside IAC; never reset local work.",
+        epilog="Examples: bin/iac-bootstrap --dry-run; bin/iac-bootstrap --root .",
+    )
+    parser.add_argument("--version", "-v", "-V", action="version", version="1.0.0")
+    parser.add_argument("--root", type=Path, default=Path(os.environ.get("IAC_ROOT", Path(__file__).resolve().parent.parent)),
+                        help="IAC clone root (default: IAC_ROOT or this script's parent workspace)")
+    parser.add_argument("--manifest", type=Path, help="manifest path relative to root (default: projects.local.json, else projects.example.json)")
+    parser.add_argument("--dry-run", action="store_true", help="inspect only; no network or filesystem writes")
+    args = parser.parse_args()
+    root = args.root.resolve()
+    try:
+        if not shutil.which("git"):
+            raise ValueError("install Git before running iac-bootstrap")
+        manifest = args.manifest or Path("projects.local.json" if (root / "projects.local.json").exists() else "projects.example.json")
+        data = load_projects(root / manifest)
+    except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        print('error: "Cannot read a valid project manifest or run Git"')
+        print('help: "Check the manifest, Git installation and --root; run bin/iac-bootstrap --help"')
+        return 2
+    if data.get("example") or any("EXAMPLE-" in p["remote"] for p in data["projects"]):
+        print(f'example_projects: {len(data["projects"])}')
+        print('help: "Obtain projects.local.json from your workspace owner; example entries are never cloned"')
+        return 0 if args.dry_run else 1
+    rows = []
+    for project in data["projects"]:
+        try:
+            status, detail = update_project(root, project, args.dry_run)
+        except (OSError, subprocess.SubprocessError):
+            status, detail = "unavailable", "check repository access, network and branch history; local work preserved"
+        rows.append((project["folder"], status, detail))
+    print(f"projects[{len(rows)}]{{folder,status,detail}}:")
+    for row in rows:
+        print("  " + ",".join(json.dumps(value) for value in row))
+    incomplete = sum(row[1] in ("held", "unavailable") for row in rows)
+    print(f"incomplete: {incomplete}")
+    if incomplete:
+        print('help: "Resolve held checkouts or request missing repository access, then rerun iac-bootstrap"')
+    return 1 if incomplete else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
