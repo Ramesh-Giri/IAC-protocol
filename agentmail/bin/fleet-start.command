@@ -1,51 +1,60 @@
 #!/bin/zsh
-# Start a project's agent fleet in a VISIBLE Terminal window, ALL SEATS ON SCREEN
-# AT ONCE as split panes -- never as windows/tabs you have to cycle through.
-# Ramesh, 2026-09-12: "there are 3 seats in terminal but in a tab bar.. dint i
-# tell u to show them separately". Seeing one seat at a time is not seeing them.
-#
-# Why a .command file: AppleScript `do script` TYPES the command into a shell and
-# any zsh startup prompt eats the first keystroke ("tmux" -> "mux"). A .command
-# file is EXECUTED, so nothing can be swallowed.
-set -e
-PROJECT="${1:-circle}"
-ROOT="/Users/darkness/Work/Aureus"
-TMUX=/opt/homebrew/bin/tmux
-SEATS=(circle-ramesh circle-review-ramesh)
-cd "$ROOT"
-
-$TMUX kill-session -t "$PROJECT" 2>/dev/null || true
-# `keep` holder window: closing an agent pane must not take the server down.
-$TMUX new-session -d -s "$PROJECT" -n keep
-
-for SEAT in $SEATS; do
-  echo "launching $SEAT ..."
-  "$ROOT/agentmail/bin/agentmail-launch" --seat "$SEAT" \
-      --terminal tmux --apply --skip-permissions || echo "  FAILED: $SEAT"
-  sleep 2
-done
-
-# Collapse every seat window into ONE window of side-by-side panes.
-FIRST="${SEATS[1]}"
-for SEAT in ${SEATS[@]:1}; do
-  $TMUX join-pane -s "$PROJECT:$SEAT" -t "$PROJECT:$FIRST" -h 2>/dev/null || true
-done
-$TMUX select-layout -t "$PROJECT:$FIRST" tiled 2>/dev/null || true
-$TMUX rename-window -t "$PROJECT:$FIRST" agents 2>/dev/null || true
-$TMUX set -t "$PROJECT" pane-border-status top 2>/dev/null || true
-$TMUX set -t "$PROJECT" pane-border-format " #{pane_index}: #{pane_title} " 2>/dev/null || true
-
-# The boot prompt does not always auto-submit in the pane; send it explicitly.
-i=1
-for SEAT in $SEATS; do
-  BOOT="You are IAC seat ${SEAT}, role child. Mail root: $ROOT/.agent-mail. Helpers: $ROOT/agentmail/bin. Read roster.json for your project authority and delegation. Reply using --in-reply-to with the incoming message ID. Escalate every decision to overseer-ramesh BY MAIL; never prompt a human. Arm your mail watcher (persistent) FIRST, then check your mail and get oriented."
-  $TMUX send-keys -t "$PROJECT:agents.$i" -l "$BOOT" 2>/dev/null || true
-  sleep 1
-  $TMUX send-keys -t "$PROJECT:agents.$i" Enter 2>/dev/null || true
-  i=$((i+1))
-done
-
-echo
-echo "Ctrl-b o = next pane · Ctrl-b z = zoom one pane full-screen (again to unzoom) · Ctrl-b d = detach"
-sleep 2
-exec $TMUX attach -t "$PROJECT"
+# Launch explicitly named roster seats and join their captured panes into one fleet window.
+# Depends on tmux, Python and agentmail-launch; creates only its holder and requested seats.
+# Site-specific settings live in ignored .iac-local.env and local/.
+set -eu
+IAC_ROOT="${IAC_ROOT:-${0:A:h:h:h}}"
+[[ ! -f "$IAC_ROOT/.iac-local.env" ]] || source "$IAC_ROOT/.iac-local.env"
+if [[ "${1:-}" == --help || "${1:-}" == -h ]]; then
+  print 'Usage: fleet-start.command <seat> [seat ...]'
+  print 'Settings: IAC_ROOT, AGENTMAIL_DIR, IAC_FLEET_SESSION (default fleet).'
+  print 'Launches with normal runtime permissions; preserves existing sessions and panes.'
+  exit 0
+fi
+if (( $# == 0 )); then
+  print -u2 'Pass the approved roster seat IDs explicitly; see fleet-start.command --help.'
+  exit 2
+fi
+MAIL_ROOT="${AGENTMAIL_DIR:-$IAC_ROOT/.agent-mail}"
+SESSION="${IAC_FLEET_SESSION:-fleet}"
+# Resolve the complete launch plan before creating any session or pane.
+PLAN="$(python3 - "$MAIL_ROOT" "$SESSION" "$@" <<'PYPLAN'
+import json, re, sys
+from pathlib import Path
+root, session, *seats = sys.argv[1:]
+valid = lambda value: isinstance(value, str) and re.fullmatch(r"[a-z0-9][a-z0-9_-]*", value)
+try:
+    roster = json.loads((Path(root) / "roster.json").read_text())["agents"]
+    if not valid(session) or len(set(seats)) != len(seats):
+        raise ValueError("invalid session or duplicate seat")
+    for seat in seats:
+        if not valid(seat) or seat not in roster:
+            raise ValueError("unknown or invalid requested seat")
+        project = roster[seat].get("project")
+        if not valid(project):
+            raise ValueError("invalid roster project")
+        print(f"{seat}|{project}")
+except (OSError, KeyError, ValueError) as exc:
+    sys.exit(f"fleet-start: {exc}")
+PYPLAN
+)"
+LAUNCH_ARGS=()
+for SEAT in "$@"; do LAUNCH_ARGS+=(--seat "$SEAT"); done
+# Launcher preflight verifies local ownership, home paths and runtime safeguards.
+"$IAC_ROOT/agentmail/bin/agentmail-launch" -d "$MAIL_ROOT" "${LAUNCH_ARGS[@]}" --terminal tmux
+if ! tmux has-session -t "=$SESSION" 2>/dev/null; then
+  HOLDER="$(tmux new-session -d -s "$SESSION" -n seats -P -F '#{pane_id}')"
+  tmux select-pane -t "$HOLDER" -T fleet-holder
+elif ! tmux display-message -p -t "${SESSION}:seats" '#{window_id}' >/dev/null 2>&1; then
+  print -u2 "Existing session $SESSION has no seats window; preserve it and configure the viewed window first."
+  exit 1
+fi
+"$IAC_ROOT/agentmail/bin/agentmail-launch" -d "$MAIL_ROOT" "${LAUNCH_ARGS[@]}" --terminal tmux --apply
+while IFS='|' read -r SEAT PROJECT; do
+  PANE="$(tmux display-message -p -t "${PROJECT}:${SEAT}" '#{pane_id}')"
+  tmux join-pane -s "$PANE" -t "${SESSION}:seats" -h
+  tmux select-layout -t "${SESSION}:seats" tiled >/dev/null
+done <<< "$PLAN"
+tmux set-option -t "$SESSION" pane-border-status top
+tmux set-option -t "$SESSION" pane-border-format ' #{pane_index}: #{pane_title} '
+exec tmux attach-session -t "${SESSION}:seats"

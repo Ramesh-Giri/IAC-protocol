@@ -5,7 +5,7 @@ It never closes, kills or messages anything. The main agent (overseer) reads the
 alerts and decides: assign work, nudge, or close the seat itself.
 
 Run as a persistent Monitor:
-    agentmail/bin/fleet-guard [--window circle:circle-agents] [--root <mail root>] [--overseer overseer-ramesh]
+    agentmail/bin/fleet-guard [--window fleet:seats] [--root <mail root>] [--overseer <main seat>]
 
 Emits one line per problem:
     IDLE <seat> <N>m unread=<n>      pane not working for >= --idle minutes (repeats every --repeat minutes)
@@ -16,20 +16,31 @@ Emits one line per problem:
     ORPHAN-WATCH <seat> pid=<n>      a mail-watch is alive for a seat whose agentmail-run is gone
     STRAY-PANE <pane> ...            a pane in the seats window that is neither a seat nor the holder
 
-Added 2026-09-14 after the overseer twice left finished or waiting seats idle
-(Ramesh: "you're forgetting things").
+Site-specific defaults and original operating history live in ignored local/.
+Mail/root and main-seat identity come from flags, environment or the local roster.
 """
-import argparse, os, re, subprocess, time
+import argparse, json, os, re, subprocess, time
+from pathlib import Path
 
 ap = argparse.ArgumentParser()
-ap.add_argument("--window", default="circle:circle-agents")
-ap.add_argument("--root", default="/Users/darkness/Work/Aureus/.agent-mail")
-ap.add_argument("--overseer", default="overseer-ramesh")
+ap.add_argument("--window", default=os.environ.get("IAC_FLEET_WINDOW", "fleet:seats"))
+ap.add_argument("--root", default=os.environ.get("AGENTMAIL_DIR", str(Path(__file__).resolve().parents[2] / ".agent-mail")))
+ap.add_argument("--overseer", default=os.environ.get("IAC_MAIN_SEAT"))
 ap.add_argument("--idle", type=int, default=2)
 ap.add_argument("--repeat", type=int, default=15)
 ap.add_argument("--interval", type=int, default=60)
 ap.add_argument("--stuck", type=int, default=8, help="minutes of unchanged 'working' screen before STUCK")
 a = ap.parse_args()
+if not a.overseer:
+    try:
+        roster = json.loads((Path(a.root) / "roster.json").read_text())
+        parents = [sid for sid, seat in roster.get("agents", {}).items()
+                   if seat.get("role") == "parent"]
+        if len(parents) != 1:
+            ap.error("set --overseer or IAC_MAIN_SEAT when the roster has multiple or no main seats")
+        a.overseer = parents[0]
+    except (OSError, ValueError) as exc:
+        ap.error(f"cannot resolve main seat: {exc}; pass --overseer and --root")
 
 def sh(*cmd):
     return subprocess.run(cmd, capture_output=True, text=True).stdout
@@ -39,8 +50,7 @@ def runner_alive(seat):
 
     A pane title vanishing is NOT evidence that a seat died: titles change with
     Claude Code's status glyph and pane indices shift when a neighbouring seat
-    is closed. Both produced false GONE alerts on 2026-09-22 while all seats
-    were demonstrably alive. The process is the subject; the title is a proxy.
+    is closed. Check the actual runner rather than inferring liveness from its title.
     """
     out = sh("pgrep", "-f", f"agentmail-run --seat {seat}")
     return bool(out.strip())
@@ -55,25 +65,21 @@ def unread(seat):
 
 PROMPTS = ("do you want to proceed", "yes, i trust", "trust this folder", "enter to confirm",
            "allow once", "approve this", "press enter to continue", "waiting for approval",
-           # Claude Code selection dialogs, e.g. the Opus 5 "Model switch" safeguard prompt
-           # that blocked two security seats (2026-09-15, 2026-09-16) with no alert.
+           # Runtime model-selection and safeguard dialogs can block unattended work.
            "enter to select", "model switch", "safeguards flagged",
-           # Codex re-asks after any plugin hook changes (claude-mem upgrade froze 3 seats, 2026-10-20).
+           # Changed plugin hooks can require human review at startup.
            "hooks need review")
 idle_since, last_emit, last_codex, seen = {}, {}, {}, set()
 last_sig, last_stuck, last_prompt, last_dialog = {}, {}, {}, 0.0
 last_hygiene = 0.0
 
 def hygiene():
-    """Ramesh could not see any seat for a whole session (2026-10-20): the only Terminal
-    client showed fleet:1 (holder) while seats ran in fleet:2, beside a forgotten
-    'sleep 86400' pane, and two mail-watch processes from seats closed 3-4 days earlier
-    were still running. Each of these is invisible from inside the overseer, so check them here."""
+    """Check the viewed window, unexpected panes and watchers without live runners."""
     session, _, _ = a.window.partition(":")
     target = sh("tmux", "display-message", "-p", "-t", a.window, "#{window_id}").strip()
     views = [l.split("|") for l in sh("tmux", "list-clients", "-t", session, "-F", "#{client_tty}|#{window_id}").splitlines()]
     if not views:
-        print(f"HIDDEN no terminal is attached to session {session}: Ramesh sees no seats (open agentmail/bin/fleet-attach-fleet.command)", flush=True)
+        print(f"HIDDEN no terminal is attached to session {session}: the operator sees no seats (open agentmail/bin/fleet-attach-fleet.command)", flush=True)
     elif target and all(w != target for _, w in views):
         print(f"HIDDEN the attached terminal shows another window, not {a.window}: join the seats into the viewed window or select-window", flush=True)
     for line in sh("tmux", "list-panes", "-t", a.window, "-F", "#{pane_id}|#{pane_title}").splitlines():
@@ -94,7 +100,7 @@ while True:
     if sh("pgrep", "-x", "CoreServicesUIAgent").split():
         wins = sh("osascript", "-e", 'tell application "System Events" to get name of every window of process "CoreServicesUIAgent"').strip()
     if wins and now - last_dialog >= 300:
-        print("MACOS-DIALOG CoreServicesUIAgent is up: a Gatekeeper/permission dialog may be blocking a seat (tell Ramesh what to click, then fix the cause)", flush=True)
+        print("MACOS-DIALOG CoreServicesUIAgent is up: a Gatekeeper/permission dialog may be blocking a seat (ask the operator to inspect it, then fix the cause)", flush=True)
         last_dialog = now
     if now - last_hygiene >= a.repeat * 60:
         hygiene()
@@ -103,8 +109,7 @@ while True:
     for line in sh("tmux", "list-panes", "-t", a.window, "-F", "#{pane_id}|#{pane_title}").splitlines():
         pane, _, title = line.partition("|")
         # Claude Code retitles its pane with a status glyph ("✳ <seat>", or a spinner
-        # while working). Matching the raw title against the maildir skipped every such
-        # seat, so the guard watched almost nothing on 2026-09-16. Keep the seat id only.
+        # while working). Strip status prefixes before matching the seat's maildir.
         title = re.sub(r"^[^A-Za-z0-9]+", "", title).strip()
         if not title or not os.path.isdir(os.path.join(a.root, title)):
             continue
@@ -112,18 +117,17 @@ while True:
         screen = sh("tmux", "capture-pane", "-p", "-t", pane)
         n = unread(title)
         # Only the bottom of the pane: a real dialog renders just above the status line,
-        # while code and diffs the agent is editing scroll past higher up. Scanning the
-        # whole screen raised PROMPT for "approve this" inside a KYB diff (2026-09-16).
+        # while ordinary code or diffs higher up can contain the same phrases.
         low = "\n".join([l for l in screen.splitlines() if l.strip()][-16:]).lower()
         if any(p in low for p in PROMPTS) and now - last_prompt.get(title, 0) >= 300:
             print(f"PROMPT {title} (pane is waiting on a question or permission prompt)", flush=True)
             last_prompt[title] = now
         # Only the live status area at the bottom counts: old "Working (" lines stay
-        # visible higher up in a Codex transcript and hid an idle seat (2026-09-14).
+        # visible higher up in a Codex transcript after work ends.
         tail = "\n".join([l for l in screen.splitlines() if l.strip()][-6:])
         # A Claude seat in a long "still thinking" phase drops the "esc to interrupt"
         # hint but keeps a present-tense spinner line ("✻ Choreographing… (5m 34s"),
-        # which raised a false IDLE on 2026-09-16. Finished turns read "Churned for 17s".
+        # which should count as working; finished turns use past tense.
         # Search a slightly wider window: a "Tip:" hint under the spinner pushed it out
         # of the 6-line tail and produced a false IDLE 17m for a working reviewer.
         wide = "\n".join([l for l in screen.splitlines() if l.strip()][-12:])
@@ -135,7 +139,7 @@ while True:
             sig = re.sub(r"[⠀-⣿✠-❋·*]|\d+", "", screen)
             # A scrolled-up Claude pane keeps an identical screen while it works;
             # only its "N new messages" counter grows. Keep that number, or the
-            # digit stripping above reports a busy seat as STUCK (2026-09-17).
+            # digit stripping above can incorrectly report a busy seat as STUCK.
             sig += "".join(re.findall(r"(\d+) new messages", screen))
             prev = last_sig.get(title)
             if prev is None or prev[0] != sig:

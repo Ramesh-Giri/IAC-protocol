@@ -3,6 +3,7 @@ checked against git's own diff output, not a hand-written diff."""
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -44,6 +45,30 @@ class ChangeReportTest(unittest.TestCase):
         self.assertIn("**Payments / money**", out)    # sensitive path flagged
         self.assertIn("+  web3dart: ^3.0.3", out)     # dependency diff shown
         self.assertIn("TODO(author)", out)            # narrative left for the author
+
+    def test_working_tree_report_preserves_index_and_includes_new_files(self):
+        with tempfile.TemporaryDirectory() as repo:
+            sh(repo, "init", "-q")
+            sh(repo, "config", "user.email", "fixture@example.invalid")
+            sh(repo, "config", "user.name", "Report fixture")
+            Path(repo, "old.py").write_text("def existing():\n    return 1\n")
+            sh(repo, "add", "old.py")
+            sh(repo, "commit", "-qm", "base")
+            Path(repo, "old.py").write_text("def existing():\n    return 2\n")
+            Path(repo, "new.py").write_text("def added():\n    return 3\n")
+            Path(repo, "ignored.txt").write_text("private fixture")
+            Path(repo, ".gitignore").write_text("ignored.txt\n")
+            index = Path(repo, ".git/index")
+            before = index.read_bytes(), index.stat().st_mtime_ns
+            command = [sys.executable, str(BASE / "bin/change-report"), "HEAD",
+                       "--working-tree", "--repo", repo, "--task", "sample"]
+            out = subprocess.check_output(command, text=True)
+            self.assertEqual(before, (index.read_bytes(), index.stat().st_mtime_ns))
+            self.assertIn("working tree", out)
+            self.assertIn("Changed: `existing()`", out)
+            self.assertIn("Added: `added()`", out)
+            self.assertNotIn("ignored.txt", out)
+            self.assertIn("0 commits", out)
 
 
 if __name__ == "__main__":

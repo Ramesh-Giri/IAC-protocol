@@ -1,3 +1,4 @@
+/* Styles the generic network dashboard; state glyphs use redundant shape and color cues. */
 *,*::before,*::after{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
 body{margin:0}
@@ -326,11 +327,11 @@ details.why p:last-child{margin-bottom:0}
 .wfgraph{border:1px solid var(--rule); background:var(--sunk); padding:6px; overflow-x:auto}
 .wf-edge{stroke:var(--amber); stroke-width:1.6; color:var(--amber)}
 .wf-cycle{stroke:var(--red); stroke-width:2.4; color:var(--red)}
-.wf-node circle{fill:var(--panel); stroke:var(--rule); stroke-width:1.4}
+.wf-node ellipse{fill:var(--panel); stroke:var(--rule); stroke-width:1.4}
 .wf-node text{fill:var(--ink)}
-.wf-n-waiting circle{stroke:var(--amber); stroke-width:2}
-.wf-n-blocking circle{stroke:var(--red); stroke-width:2}
-.wf-n-cycle circle{stroke:var(--red); stroke-width:3; stroke-dasharray:4 3}
+.wf-n-waiting ellipse{stroke:var(--amber); stroke-width:2}
+.wf-n-blocking ellipse{stroke:var(--red); stroke-width:2}
+.wf-n-cycle ellipse{stroke:var(--red); stroke-width:3; stroke-dasharray:4 3}
 
 /* ---- visibility tiers ---- */
 .vis{display:inline-block; font-size:9px; letter-spacing:.14em; text-transform:uppercase; padding:0 5px;

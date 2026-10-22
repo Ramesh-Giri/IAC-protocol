@@ -12,7 +12,7 @@ throwaway session in a detached tmux window, scrape it, and kill it.
 Reads only. Costs ~nothing: /usage and /status are UI commands, not model calls.
 """
 from __future__ import annotations
-import argparse, re, shutil, subprocess, sys, time, uuid
+import argparse, os, re, shutil, subprocess, sys, time, uuid
 
 def tmux(*a, **kw):
     return subprocess.run(["tmux", *a], capture_output=True, text=True, **kw)
@@ -38,14 +38,14 @@ def probe(session: str, binary: str, command: str, boot_wait: int, read_wait: in
         time.sleep(read_wait)
         # Read scrollback, not just the visible screen: Claude's /usage renders
         # the limit rows ABOVE a long "what's contributing" section, so a plain
-        # capture-pane missed them and reported "did not render" (2026-09-14).
+        # capture-pane can miss them and incorrectly report "did not render".
         return tmux("capture-pane", "-p", "-S", "-300", "-t", f"{session}:{win}").stdout
     finally:
         tmux("kill-window", "-t", f"{session}:{win}")
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--session", default="circle")
+    ap.add_argument("--session", default=os.environ.get("IAC_FLEET_SESSION", "fleet"))
     args = ap.parse_args()
 
     if not shutil.which("tmux"):

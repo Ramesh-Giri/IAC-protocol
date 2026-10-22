@@ -220,7 +220,7 @@ class TestPageContract(unittest.TestCase):
     def test_tags_are_balanced(self):
         from html.parser import HTMLParser
         void = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param",
-                "source", "track", "wbr", "path", "circle", "line", "rect", "polygon", "polyline",
+                "source", "track", "wbr", "path", "ellipse", "line", "rect", "polygon", "polyline",
                 "text", "marker", "use", "stop"}
 
         class P(HTMLParser):

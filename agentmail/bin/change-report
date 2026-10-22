@@ -2,10 +2,9 @@
 """Write a change report for a range of commits, so the human over-reviewer can
 see exactly what an agent changed without reading the diff.
 
-Why this exists: Ramesh designs the architecture but no longer writes the code.
-After a night of agent work he could not tell what was written, which flows
-changed, which files and functions were touched, or how a fix was implemented.
-DONE mails and reviews held that knowledge, scattered and in prose.
+Reports combine Git-derived facts with an author narrative so reviewers can
+understand changed flows, files, verification and release impact in one place.
+Site-specific report examples and the original prose live in ignored local/.
 
 Two halves:
   FACTS      generated here from git, so they cannot be misreported: commits,
@@ -15,6 +14,7 @@ Two halves:
              step, how it is implemented, how it was verified, deploy impact.
 
     change-report <base> [<head>] [--repo DIR] [--task ID] [--narrative FILE] [--out FILE]
+    change-report <base> --working-tree [--repo DIR] [--out FILE]
     change-report --check FILE      exit 1 while any TODO(author) remains
 
 Symbol detection is a language-agnostic heuristic (Dart, TS/JS, Python, Kotlin,
@@ -23,6 +23,7 @@ enclosing definition git names for each hunk. It never claims behaviour.
 """
 from __future__ import annotations
 import argparse, re, subprocess, sys
+from pathlib import Path
 from collections import defaultdict
 
 KEYWORDS = {"if", "for", "while", "switch", "catch", "return", "await", "new",
@@ -106,8 +107,9 @@ def parse_diff(repo, base, head, text):
     def content(rev, path):
         if (rev, path) not in cache:
             try:
-                cache[(rev, path)] = git(repo, "show", f"{rev}:{path}").splitlines()
-            except subprocess.CalledProcessError:
+                cache[(rev, path)] = ((Path(repo) / path).read_text().splitlines() if rev == "WORKTREE"
+                                      else git(repo, "show", f"{rev}:{path}").splitlines())
+            except (OSError, subprocess.CalledProcessError):
                 cache[(rev, path)] = []
         return cache[(rev, path)]
 
@@ -150,7 +152,7 @@ def parse_diff(repo, base, head, text):
 
 
 def dep_lines(repo, base, head, path):
-    d = git(repo, "diff", "-U0", base, head, "--", path)
+    d = git(repo, "diff", "-U0", base, *([] if head == "WORKTREE" else [head]), "--", path)
     return [l for l in d.splitlines() if l[:1] in "+-" and not l.startswith(("+++", "---")) and l[1:].strip() and not l[1:].strip().startswith("#")]
 
 
@@ -159,9 +161,9 @@ TODO(author): one paragraph. The problem or request, and the outcome now.
 
 ## Flow (step by step)
 TODO(author): the runtime path through the change, entry point first. Example:
-1. User taps Pay on `SkyzaiPayConfirmationScreen` -> `SignTransactionCubit.sign()`.
-2. App calls the `completeSkyzaiPayment` callable with the Hedera transaction id.
-3. Server verifies the transaction on Mirror, claims it once in `usedHederaTransferIds`, marks the payment paid.
+1. A sender invokes mail-send with a body file and recipient seat.
+2. The helper validates the message and writes it atomically into new/.
+3. The recipient reads it with mail-read and sends a correlated reply.
 
 ## How it is implemented
 TODO(author): the design choice and why, per main file/function. Name the functions.
@@ -176,24 +178,37 @@ TODO(author): what must be deployed (functions by name, rules, indexes, config v
 
 
 def build(args):
-    repo, base, head = args.repo, args.base, args.head
-    base_sha, head_sha = git(repo, "rev-parse", "--short", base).strip(), git(repo, "rev-parse", "--short", head).strip()
+    repo, base = args.repo, args.base
+    working = getattr(args, "working_tree", False)
+    head = "WORKTREE" if working else args.head
+    revisions = [base] if working else [base, head]
+    base_sha = git(repo, "rev-parse", "--short", base).strip()
+    head_sha = "working tree" if working else git(repo, "rev-parse", "--short", head).strip()
     branch = git(repo, "rev-parse", "--abbrev-ref", "HEAD").strip()
-    commits = git(repo, "log", "--no-merges", "--reverse", "--format=%h|%an|%ad|%s", "--date=format:%Y-%m-%d %H:%M", f"{base}..{head}").splitlines()
-    merges = git(repo, "log", "--merges", "--reverse", "--format=%h|%s", f"{base}..{head}").splitlines()
-    status = [l.split("\t") for l in git(repo, "diff", "-M", "--name-status", base, head).splitlines() if l]
+    commits = [] if working else git(repo, "log", "--no-merges", "--reverse", "--format=%h|%an|%ad|%s", "--date=format:%Y-%m-%d %H:%M", f"{base}..{head}").splitlines()
+    merges = [] if working else git(repo, "log", "--merges", "--reverse", "--format=%h|%s", f"{base}..{head}").splitlines()
+    status = [l.split("\t") for l in git(repo, "diff", "-M", "--name-status", *revisions).splitlines() if l]
     nums = {}
-    for l in git(repo, "diff", "-M", "--numstat", base, head).splitlines():
+    for l in git(repo, "diff", "-M", "--numstat", *revisions).splitlines():
         a, d, p = l.split("\t", 2)
         p = re.sub(r"\{([^}]*) => ([^}]*)\}", r"\2", p.split(" => ")[-1]) if "=>" in p else p
         nums[p] = (a, d)
-    diff = parse_diff(repo, base, head, git(repo, "diff", "-M", "-U0", base, head))
+    diff = parse_diff(repo, base, head, git(repo, "diff", "-M", "-U0", *revisions))
 
     files = []
     for row in status:
         kind, path = row[0][0], row[-1]
         a, d = nums.get(path, ("?", "?"))
         files.append((kind, path, row[1] if kind == "R" else None, a, d))
+    if working:
+        out_path = Path(args.out).resolve() if getattr(args, "out", None) else None
+        for path in git(repo, "ls-files", "--others", "--exclude-standard", "-z").split("\0"):
+            if not path or (Path(repo) / path).resolve() == out_path:
+                continue
+            content = (Path(repo) / path).read_text(errors="replace").splitlines()
+            files.append(("A", path, None, str(len(content)), "0"))
+            diff[path]["plus"].update(s for line in content if (s := symbols(line)))
+
     label = {"A": "added", "M": "modified", "D": "deleted", "R": "renamed", "C": "copied", "T": "type changed"}
 
     L = []
@@ -272,6 +287,7 @@ def main():
     ap.add_argument("head", nargs="?", default="HEAD")
     ap.add_argument("--repo", default=".")
     ap.add_argument("--task")
+    ap.add_argument("--working-tree", action="store_true", help="report uncommitted tracked and nonignored new files; no Git writes")
     ap.add_argument("--narrative", help="markdown file with the Part 1 sections filled in")
     ap.add_argument("--out")
     ap.add_argument("--check", metavar="FILE", help="exit 1 if FILE still has TODO(author)")

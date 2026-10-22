@@ -1,7 +1,15 @@
 #!/bin/zsh
-# Attach a VISIBLE Terminal window to a project's agent fleet.
-# Executed directly by Terminal (open -a Terminal), so no keystrokes are typed
-# into a shell -- the oh-my-zsh update prompt used to swallow the first
-# character of an AppleScript-typed command ("tmux" -> "mux", 2026-09-12).
-SESSION="${1:-circle}"
-exec /opt/homebrew/bin/tmux attach -t "$SESSION"
+# Attach to the configured fleet window; no sessions or panes are created.
+# Site-specific defaults live in ignored .iac-local.env and local/.
+set -eu
+IAC_ROOT="${IAC_ROOT:-${0:A:h:h:h}}"
+[[ ! -f "$IAC_ROOT/.iac-local.env" ]] || source "$IAC_ROOT/.iac-local.env"
+if [[ "${1:-}" == --help || "${1:-}" == -h ]]; then
+  print 'Usage: fleet-watch.command [session:window] (default: IAC_FLEET_WINDOW or fleet:seats)'
+  exit 0
+fi
+if (( $# > 1 )) || [[ "${1:-}" == -* ]]; then
+  print -u2 'Usage: fleet-watch.command [session:window]'
+  exit 2
+fi
+exec tmux attach-session -t "${1:-${IAC_FLEET_WINDOW:-fleet:seats}}"

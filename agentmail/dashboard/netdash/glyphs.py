@@ -33,7 +33,7 @@ def g_mailbox(state: str, n) -> str:
         return b + "".join(parts) + "</svg>"
     if state == "deaf":
         parts.append('<rect x="1" y="1" width="20" height="17" fill="none" stroke="currentColor" stroke-width="1.6"/>')
-    parts.append('<circle cx="11" cy="9.2" r="5.6" fill="none" stroke="currentColor" stroke-width="1.8"/>')
+    parts.append('<ellipse cx="11" cy="9.2" rx="5.6" ry="5.6" fill="none" stroke="currentColor" stroke-width="1.8"/>')
     if n:
         parts.append('<text x="11" y="12.3" text-anchor="middle" font-size="7.6" '
                      'font-family="ui-monospace,Menlo,monospace" font-weight="700" '
@@ -65,8 +65,8 @@ def g_occ(state: str) -> str:
         s = ('<rect x="4" y="3" width="4" height="14" fill="currentColor"/>'
              '<rect x="12" y="3" width="4" height="14" fill="currentColor"/>')
     elif state == "spinning":
-        s = ('<circle cx="10" cy="10" r="6.6" fill="none" stroke="currentColor" stroke-width="2"'
-             ' stroke-dasharray="3.2 3.2"/><circle cx="10" cy="10" r="1.6" fill="currentColor"/>')
+        s = ('<ellipse cx="10" cy="10" rx="6.6" ry="6.6" fill="none" stroke="currentColor" stroke-width="2"'
+             ' stroke-dasharray="3.2 3.2"/><ellipse cx="10" cy="10" rx="1.6" ry="1.6" fill="currentColor"/>')
     else:
         s = '<line x1="3" y1="10" x2="17" y2="10" stroke="currentColor" stroke-width="2.2"/>'
     return b + s + "</svg>"

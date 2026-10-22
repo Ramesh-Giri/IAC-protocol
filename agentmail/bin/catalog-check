@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 """Verify every roster seat's pinned model id against TODAY's local model catalogue.
 
-Phase 1 of modelpick-0927-x2q5 (agentmail/research/modelpick/DESIGN.md). This is the
+This is the
 "existence and entitlement is a file read, not a web search believed once" check: it
 reads the two caches each runtime's own CLI already writes
 (~/.codex/models_cache.json, ~/.claude/cache/model-catalog/*.json) and flags any
 roster seat whose model id is not a key in today's file for its runtime. It reports;
 it never edits roster.json or any other live fleet file. A model that is not
 installed or not entitled must never be recommended, and this is how that gets
-checked on every run instead of assumed once (2026-09-12's gpt-5.3-codex-spark was
-verified working and gone nine days later -- nobody would have noticed until a
-launch failed).
+checked on every run instead of assumed once.
+Private historical catalogue observations live in ignored local/.
 
 Usage:
   catalog-check [-d MAIL_ROOT] [--help]

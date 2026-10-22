@@ -38,6 +38,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shlex
 import subprocess
 import sys
@@ -50,18 +51,10 @@ import model_guard as _mg
 TOOL_VERSION = "1.1.0"
 
 # ---------------------------------------------------------------------------
-# Model guard integration (modelpick-0927-x2q5, phase 3 -- authorized by Ramesh via
-# overseer-ramesh, 2026-09-27, reversing the original "touch no live fleet tooling" boundary
-# for this one wiring). ADVISORY ONLY at this integration point: it reports and logs what the
-# hard-rule guard thinks of the roster's OWN model choice for each seat; it never substitutes
-# a different model and never blocks a launch. The launch always uses seat["model"] exactly as
-# roster.json has it, unchanged -- "an absent model stays a finding, never a substitution",
-# and the launcher's own long-standing rule from day one: "Never block a launch."
-#
-# THE NON-NEGOTIABLE: a launch must never fail because of the guard. Every function below is
-# wrapped so that a missing catalogue, a malformed pattern file, an exception inside
-# model_guard.resolve(), or the guard rejecting every candidate all degrade to "no guard
-# opinion available" and the launch proceeds exactly as it would have with no guard at all.
+# Advisory model guard: report and log the roster's own choice without substituting it.
+# Site-specific authorization history and model policy live in ignored local/.
+# Catalogue failures, guard exceptions and empty survivor sets are reported as findings;
+# they never block a launch or grant permission to change the approved roster model.
 # ---------------------------------------------------------------------------
 
 
@@ -137,12 +130,11 @@ def _guard_summary_line(report: dict) -> str:
 
 
 def _print_full_roster_guard_audit(agents: dict) -> None:
-    """The full-roster proof requested for modelpick-0927-x2q5 phase 3: run the guard over
-    EVERY roster seat (not just ones with a home directory that exists on this machine -- a
-    closed seat's fixed violation still needs to show up here), and report the diff between
-    what the roster holds and what the guard would allow. An empty diff is the pass condition;
-    the overseer asked to be mailed and told to STOP if it is not empty. This function only
-    prints -- it never raises, and it changes nothing."""
+    """Report advisory mismatches across all seats, including homes absent on this machine.
+
+    Missing models and guard errors are unknown findings, never successful checks.
+    This function only prints; it never changes configuration or blocks a launch.
+    """
     try:
         print("guard audit — full roster (every seat, home directory or not)")
         mismatches = []
@@ -216,66 +208,225 @@ def _resend_boot_if_idle(window: str, prompt: str, wait: int = 12) -> bool:
     seat then shows an empty prompt and looks hung to the operator. But some
     runtimes DO honour argv, and blindly typing the prompt again would submit it
     twice. So decide from the pane itself: a working agent renders an interrupt
-    hint ("esc to interrupt" / "to interrupt"), an idle one does not.
+    hint ("esc to interrupt" / "to interrupt") on its current status line.
+    Use the same capture and trust guards for literal text and subsequent keys.
     """
-    import time
-    for _ in range(wait):
-        time.sleep(1)
-        try:
-            pane = subprocess.run(["tmux", "capture-pane", "-p", "-t", window],
-                                  capture_output=True, text=True, timeout=10).stdout
-        except Exception:
-            return False
-        if not pane.strip():
+    try:
+        return _submit_until_working(window, boot_prompt=prompt, capture_tries=wait)
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+# Exact cwd supplied to spawn, keyed by its unchanged tmux target.
+_LAUNCH_CWDS: dict[str, str] = {}
+
+
+def _startup_folder_matches(pane: str, cwd: str | None) -> bool:
+    # Preserve every path byte, including leading/trailing whitespace.
+    lines = [line for line in pane.splitlines() if line.strip()]
+    return bool(cwd and len(lines) in (3, 5) and lines[0].lower() == "trust this folder?"
+                and lines[-1].lower() == "trust and continue" and lines[1] == cwd
+                and (len(lines) == 3 or (lines[2].lower() == "repository root:" and lines[3] == cwd)))
+
+
+# Known idle suffixes only; a glyph by itself never proves input readiness.
+_IDLE_SCREENS = {
+    "claude-code": (r"─{3,}", r"❯(?: (?P<text>.*))?", r"─{3,}", r"\? for shortcuts"),
+    "codex-cli": (r"›(?: (?P<text>.*))?", r"\? for shortcuts"),
+}
+
+
+def _startup_idle_matches(pane: str, prompt: str | None = None) -> bool:
+    lines = [line.strip() for line in pane.splitlines() if line.strip()]
+    for patterns in _IDLE_SCREENS.values():
+        if len(lines) < len(patterns):
             continue
-        if "to interrupt" in pane:
-            return False          # already working -- argv was honoured
-        if "\u276f" in pane or "\u203a" in pane:   # idle prompt glyph
-            try:
-                subprocess.run(["tmux", "send-keys", "-t", window, "-l", prompt],
-                               check=True, timeout=10)
-                return _submit_until_working(window)
-            except Exception:
-                return False
+        matches = [re.fullmatch(pattern, line)
+                   for pattern, line in zip(patterns, lines[-len(patterns):])]
+        if all(matches):
+            text = next(match.groupdict()["text"] for match in matches if "text" in match.groupdict())
+            # After our paste, only that exact pending prompt may be submitted.
+            if not text or text == prompt:
+                return True
     return False
 
 
-def _submit_until_working(window: str, tries: int = 4) -> bool:
+def _submit_until_working(window: str, tries: int = 4, *,
+                          boot_prompt: str | None = None, capture_tries: int = 16) -> bool:
     """Press Enter until the pane shows the agent working.
 
     A long typed prompt arrives as a bracketed paste; Codex can swallow the
     first Enter (still booting, or treating it as part of the paste), leaving
-    the instruction sitting unsent in the input box (2026-10-08: six seats
-    idle with their brief typed in). So never assume one Enter landed --
-    verify "to interrupt" appears, retrying a few times.
+    the instruction sitting unsent in the input box. Never assume one Enter landed;
+    verify the current status line, retrying a few times.
+    Optional boot text is typed once at a known idle composer, then recaptured before Enter.
     """
     import time
+    folder_selected = False
+    pending_prompt = boot_prompt
     for _ in range(tries):
         time.sleep(2)
-        # A claude-mem upgrade makes Codex open its hook-trust screen ("Modified
-        # since last trusted - review required") before the first prompt; the
-        # seat then sits there forever (2026-10-09, 3 seats). These are our own
-        # previously trusted claude-mem hooks: trust them and close the screens.
-        for _ in range(8):
-            pane = subprocess.run(["tmux", "capture-pane", "-p", "-t", window],
-                                  capture_output=True, text=True, timeout=10).stdout
-            if "review required" in pane:
-                subprocess.run(["tmux", "send-keys", "-t", window, "t"], timeout=10)
-            elif "esc back" in pane or "esc close" in pane:
-                subprocess.run(["tmux", "send-keys", "-t", window, "Escape"], timeout=10)
-            else:
-                break
-            time.sleep(1)
-        subprocess.run(["tmux", "send-keys", "-t", window, "Enter"], timeout=10)
-        for _ in range(8):
-            time.sleep(1)
-            pane = subprocess.run(["tmux", "capture-pane", "-p", "-t", window],
-                                  capture_output=True, text=True, timeout=10).stdout
-            if "to interrupt" in pane:
+        submitted = False
+        # One guard for every capture, before and after submitting the prompt.
+        for _ in range(capture_tries):
+            try:
+                capture = subprocess.run(["tmux", "capture-pane", "-p", "-t", window],
+                                         capture_output=True, text=True, timeout=10)
+                pane = capture.stdout if capture.returncode == 0 else ""
+            except (OSError, subprocess.SubprocessError):
+                pane = ""
+            if not pane or not pane.strip():
+                folder_selected = False
+                time.sleep(1)
+                continue  # Unknown readiness must never result in a key press.
+            folder_matches = _startup_folder_matches(pane, _LAUNCH_CWDS.get(window))
+            if not folder_matches:
+                folder_selected = False
+            if folder_matches:
+                # Select and confirm on separate successful captures, guarding both keys.
+                action = "Enter" if folder_selected else "Home"
+                subprocess.run(["tmux", "send-keys", "-t", window, action], timeout=10)
+                folder_selected = action == "Home"
+            elif re.fullmatch(r"(?:esc to interrupt|to interrupt|"
+                              r"(?:[•✻✽✶✳✢*·]\s+[^()]+|Working)\s*"
+                              r"\([^()]*\besc to interrupt\))",
+                              pane.rstrip().splitlines()[-1].strip()):
                 return True
-    print(f"WARNING: {window} never started working after {tries} Enters",
+            elif not _startup_idle_matches(pane, pending_prompt):
+                subprocess.run(["tmux", "send-keys", "-t", window, "Escape"], timeout=10)
+                tail = pane.rstrip().splitlines()[-3:]
+                print(f"WARNING: {window.rsplit(':', 1)[-1]}: unknown startup screen; "
+                      f"hooks stay human-only; last 3 lines: {tail!r}", file=sys.stderr)
+                return False
+            elif boot_prompt is not None:
+                if _startup_idle_matches(pane):
+                    subprocess.run(["tmux", "send-keys", "-t", window, "-l", boot_prompt],
+                                   check=True, timeout=10)
+                boot_prompt = None  # Recapture and recheck readiness before pressing Enter.
+            elif not submitted:
+                subprocess.run(["tmux", "send-keys", "-t", window, "Enter"], timeout=10)
+                submitted = True
+            time.sleep(1)
+    print(f"WARNING: {window}: startup readiness unknown after {tries} attempts; trust withheld",
           file=sys.stderr)
     return False
+
+
+def _self_check_startup_trust() -> None:
+    import contextlib
+    import io
+    from unittest.mock import patch
+
+    cwd = "/tmp/launchtrust-fixture"
+    folder = lambda path: f"Trust this folder?\n{path}\nTrust and continue"
+    row = "claude-mem@claude-mem-local:hooks/codex-hooks.json:pre_tool_use:0:0 sha256:" + "a" * 64
+    listing = f"5 hooks need review\n{row}\nt trust all"
+    rejected = [
+        "Hooks need review\n5 hooks are new or changed.",
+        "Modified hooks since last trusted - review required",
+        listing, listing.replace("sha256:", "sha256:0", 1),
+        listing.replace("claude-mem-local", "unknown-plugin", 1),
+        listing.replace("5 hooks", "6 hooks"), listing.replace(row, ""),
+        listing + "\nunknown additional hook", listing.replace(row, "evil!" + row),
+        listing.replace(":0:0 ", ":0:0!evil "),
+        listing + "\n6 hooks need review", listing + "\n5 hooks need review",
+        listing + "\n??? additional hook with no parseable identity", listing + "\n" + row,
+        "5 hooks need review\nt trust all\nPrevious status: esc to interrupt",
+        "5 hooks need\nreview\nt trust all", "5 hooks need revie\nt trust all",
+        "9" * 5000 + " hooks need review\nt trust all",
+        "TRUST these\nHOOKS", "changed\nhook", "new hook",
+        folder(cwd + "-other"), folder(cwd + "/child"), folder(cwd + "/link"),
+        folder(cwd + "/../outside"), "Trust this folder?", folder(cwd + " "),
+        folder(" " + cwd), folder(cwd + "/"), folder(cwd[:12] + "..."),
+        folder(cwd[:12] + "\n" + cwd[12:]), folder(cwd) + "\n/etc",
+    ]
+    for target in ('"/etc"', "../launchtrust-fixture", "[unknown target]", '"' + cwd + '"', cwd + " "):
+        rejected.append(f"Trust this folder?\n{target}\nRepository root:\n{cwd}\nTrust and continue")
+    rejected.append(f"Trust this folder?\n{cwd}\nRepository root:\n{cwd} \nTrust and continue")
+    rejected += [
+        "Hooks\nneed\nreview\n\n› Trust all\n  Exit",
+        "Trust this\nfolder?\n/tmp/unapproved\nTrust and continue\n›",
+        "Hooks pending approval\n\nhook row\n\n› Trust all\n  Exit",
+        "Choose an option\n› Continue\n  Cancel", "›", "normal idle prompt",
+        "────────\n❯\n────────", "›\n? for shortcut",
+        "Previous status: esc to interrupt", "esc to interrupt\nnormal idle prompt",
+        "The prompt mentions esc to interrupt",
+    ]
+    claude = "────────\n❯\n────────\n  ? for shortcuts\n"
+    codex = "› \n\n  ? for shortcuts\n"
+    assert not _startup_folder_matches(folder(cwd), None)
+    assert not _startup_idle_matches("normal idle prompt")
+
+    def check(captures, expected_keys, expected_result, warning_count, entry="submit"):
+        index, keys = 0, []
+        def run(args, **kwargs):
+            nonlocal index
+            if "capture-pane" in args:
+                capture = captures[min(index, len(captures) - 1)]
+                index += 1
+                if isinstance(capture, Exception):
+                    raise capture
+                if isinstance(capture, subprocess.CompletedProcess):
+                    return capture
+                return subprocess.CompletedProcess(args, 0, stdout=capture)
+            if "send-keys" in args:
+                keys.append(args[-1])
+            return subprocess.CompletedProcess(args, 0)
+        with patch.dict(_LAUNCH_CWDS, {"fixture": cwd}), \
+                patch.object(subprocess, "run", side_effect=run), patch("time.sleep"), \
+                contextlib.redirect_stderr(io.StringIO()) as warnings:
+            if entry == "spawn":
+                assert spawn("tmux", "fixture", "cli 'boot prompt'")[0]
+            elif entry == "resend":
+                assert _resend_boot_if_idle("fixture", "boot prompt", wait=16) == expected_result
+            else:
+                assert _submit_until_working("fixture", tries=1) == expected_result
+        assert keys == expected_keys, (captures, keys)
+        warning = warnings.getvalue()
+        assert warning.count("WARNING:") == warning_count, warning
+        if "Escape" in expected_keys:
+            assert "fixture" in warning and "last 3 lines:" in warning, warning
+            rejected_pane = captures[min(index, len(captures)) - 1]
+            assert repr(rejected_pane.rstrip().splitlines()[-3:]) in warning, warning
+        assert 1 <= index <= (64 if entry != "submit" else 16), index
+        return index
+
+    timeout = subprocess.TimeoutExpired("capture-pane", 10)
+    failed = subprocess.CompletedProcess([], 1, stdout=codex)
+    count_only = "5 hooks need review\nt trust all"
+    working = "• Working (1s • esc to interrupt)"
+    for entry in ("submit", "resend", "spawn"):
+        for pane in rejected:
+            check([pane, working], ["Escape"], False, 1, entry)
+        for unavailable in ("", " \n", timeout, OSError("capture failed"), failed):
+            assert check([unavailable], [], False, 1, entry) == (
+                16 if entry == "submit" else 48 if entry == "spawn" else 64)
+            check([unavailable, count_only], ["Escape"], False, 1, entry)
+        check(["", timeout, failed, working], [], True, 0, entry)
+        check(["older transcript\n" + working + "\n  "], [], True, 0, entry)
+        for idle in (claude, codex):
+            pending = idle.replace("❯", "❯ boot prompt").replace("› ", "› boot prompt")
+            wrong_text = pending.replace("boot prompt", "unrecognized text")
+            check([wrong_text], ["Escape"], False, 1, entry)
+            keys = ["Enter"] if entry == "submit" else ["boot prompt", "Enter"]
+            check([idle] + ([] if entry == "submit" else [pending]) + [working],
+                  keys, True, 0, entry)
+            check([idle, count_only], keys[:1] + ["Escape"], False, 1, entry)
+            if entry != "submit":
+                check([pending, pending, working], ["Enter"], True, 0, entry)
+                # A swallowed Enter is retried without retyping our boot text.
+                captures_per_try = 12 if entry == "spawn" else 16
+                check([idle] + [pending] * captures_per_try + [working],
+                      ["boot prompt", "Enter", "Enter"], True, 0, entry)
+                check([folder(cwd), folder(cwd), idle, pending, working],
+                      ["Home", "Enter", "boot prompt", "Enter"], True, 0, entry)
+        for pane in (folder(cwd), f"Trust this folder?\n{cwd}\nRepository root:\n{cwd}\nTrust and continue"):
+            check([pane, pane, working], ["Home", "Enter"], True, 0, entry)
+            check([pane, count_only], ["Home", "Escape"], False, 1, entry)
+            check([pane, failed], ["Home"], False, 1, entry)
+        check([codex] + [""] * 14 + [count_only],
+              (["Enter"] if entry == "submit" else ["boot prompt"]) + ["Escape"], False, 1, entry)
+
 
 
 def applescript_quote(s: str) -> str:
@@ -301,22 +452,18 @@ def build_command(seat: dict, mail_root: str) -> str:
     if runtime == "claude-code":
         # Name the session after its SEAT. Without --name, Claude Code labels every
         # session by its working directory, so all seats sharing one repo show up
-        # as the same name (e.g. five panes all called "skyzai_app").
+        # under the same repository name.
         parts = ["claude", "--name", sid]
         if seat.get("model"):
             parts += ["--model", seat["model"]]
         if seat.get("_skip_permissions") and not parent:
-            # Ramesh's settings disable bypass mode, so --dangerously-skip-permissions
-            # alone left children stuck on approval prompts nobody watches (2026-10-17).
-            # Auto mode lets the classifier approve safe actions and block risky ones.
+            # Use the configured unattended worker mode only when explicitly requested.
+            # Runtime and operating-system safeguards remain independently effective.
             parts += ["--permission-mode", "auto"]
         if not parent:
-            # A child talks to NO human — decisions escalate to the overseer by mail.
-            # Remove the interactive-question tool so a child physically cannot prompt
-            # the operator (instruction alone has failed; this is the hard guarantee).
-            # Workers also lose the sub-agent tool unless the roster opts in
-            # ("allow_subagents": true, e.g. the security-audit skill): two seats
-            # told "no sub-agents" spawned forks anyway and stalled on them (2026-09-17).
+            # Decision questions go to the overseer by mail.
+            # Removing the question tool does not remove OS/runtime permission prompts.
+            # Subagent access requires an explicit roster opt-in.
             blocked = ["AskUserQuestion"]
             if not seat.get("allow_subagents"):
                 blocked.append("Agent")
@@ -324,14 +471,8 @@ def build_command(seat: dict, mail_root: str) -> str:
             # A child's cwd is its project sub-repo, but it must read the shared mail
             # root and these helpers, which live in the org root above it. Grant it.
             parts += ["--add-dir", str(Path(mail_root).resolve().parent)]
-            # Standing rule: seats take an ISOLATED treehouse worktree rather than
-            # sharing one checkout. Those live under ~/.treehouse, OUTSIDE the org
-            # root, so without this a seat can READ there but blocks on a directory
-            # permission prompt the first time it EDITS a file -- a prompt nobody
-            # answers, which is exactly the rule 12 stall. `--dangerously-skip-
-            # permissions` does NOT cover new directory access; it is a separate
-            # gate, the same shape as the rule 10 read-block. Found 2026-09-23 when
-            # a Level 3 seat sat blocked on an edit to firebase.json in worktree 14.
+            # Leased worktrees can live outside the project and mail directories.
+            # Directory grants remain subject to effective runtime and host policy.
             treehouse_root = Path(
                 os.environ.get("TREEHOUSE_ROOT", Path.home() / ".treehouse")
             )
@@ -341,40 +482,31 @@ def build_command(seat: dict, mail_root: str) -> str:
     elif runtime == "codex-cli":
         if seat.get("_skip_permissions"):
             raise ValueError("Codex keeps its sandbox; use normal permissions for this seat")
-        # `never`, not `on-request`: a child must not be able to block on a human
-        # (rule 12). on-request stalls the seat waiting on an operator who is not
-        # watching its pane -- the Codex equivalent of the AskUserQuestion problem.
-        # The SANDBOX is what keeps this safe, and it is retained: workspace-write
-        # is a real boundary, so an unattended Codex seat is better contained than
-        # a Claude child running --dangerously-skip-permissions.
-        parts = ["codex", "--sandbox", "workspace-write", "--ask-for-approval", "never",
+        # The interactive supervisor retains approvals; unattended workers never prompt.
+        # Both profiles retain the sandbox and remain subject to host policy.
+        approval = "on-request" if parent else "never"
+        parts = ["codex", "--sandbox", "workspace-write", "--ask-for-approval", approval,
                  "--add-dir", mail_root]
-        # A fleet seat must never drive the operator's desktop (2026-09-30: a Codex
-        # seat with a broken shell fell back to computer-use and tried to open
-        # Terminal.app and iTerm2 on Ramesh's screen). Switch the GUI plugins off
-        # for this seat only; Ramesh's own Codex config keeps them.
-        for plugin in ("computer-use@openai-bundled", "unified-computer-use@openai-bundled",
-                       "browser@openai-bundled"):
-            parts += ["-c", f'plugins."{plugin}".enabled=false']
-        # Task-scoped write grants (roster "add_dirs"), e.g. the repo's .git for
-        # worktree commits or the Flutter SDK cache. Ramesh, 2026-10-07: grant
-        # only the paths a task needs, never a blanket sandbox bypass.
+        # Unattended workers use shell mail polling and do not drive the operator's desktop.
+        # Disable GUI plugins for this seat without changing the human's global configuration.
+        if not parent:
+            for plugin in ("computer-use@openai-bundled", "unified-computer-use@openai-bundled",
+                           "browser@openai-bundled"):
+                parts += ["-c", f'plugins."{plugin}".enabled=false']
+        # Apply only task-scoped write grants recorded in the approved roster.
         for extra in seat.get("add_dirs", []):
             parts += ["--add-dir", extra]
-        # Roster "effort" (low|medium|high|xhigh|max|ultra) sets Codex reasoning effort;
-        # gpt-6.1-sol defaults to low, too shallow for reviews and security work.
+        # Use explicit roster reasoning effort rather than assuming a runtime default.
         if seat.get("effort"):
             parts += ["-c", f'model_reasoning_effort="{seat["effort"]}"']
-        # Roster "network": true lets the sandbox open sockets. flutter test and
-        # the functions suite need a localhost socket; without it every seat
-        # handed its own verification back to the overseer (2026-10-09).
+        # Socket access is enabled only by the roster's explicit network setting.
         if seat.get("network"):
             parts += ["-c", "sandbox_workspace_write.network_access=true"]
         if seat.get("model"):
             parts += ["--model", seat["model"]]
         # Codex has no persistent Monitor tool, so "arm your watcher" made it reach
         # for a terminal window. Tell it how mail works for it instead.
-        parts.append(prompt + (
+        parts.append(prompt if parent else prompt + (
             " NOTE FOR CODEX: you have no background watcher tool. Do NOT open any"
             " terminal or app. Read mail with the shell command"
             f" {Path(__file__).resolve().with_name('mail-read')} {sid} -d {mail_root}"
@@ -410,21 +542,14 @@ def spawn(kind: str, title: str, command: str, session: str | None = None) -> tu
                   f'end tell')
     elif kind == "tmux":
         try:
-            # Fleet tmux sessions are named PER PROJECT (`circle`, `skyzai`), so a
-            # seat must land in ITS project's session. `tmux new-window` with no
-            # -t uses whatever session is CURRENT -- i.e. whichever one a human
-            # happens to be attached to -- so two skyzai seats opened inside the
-            # `circle` session on 2026-09-28 and had to be moved by hand. Target
-            # the session explicitly, creating it detached if it does not exist.
+            # Target the requested project session rather than whichever session is current.
             target = title
             if session:
                 if subprocess.run(["tmux", "has-session", "-t", f"={session}"],
                                   capture_output=True, timeout=10).returncode != 0:
                     subprocess.run(["tmux", "new-session", "-d", "-s", session],
                                    check=True, timeout=15)
-                # "=session:" = exact session, next free index. A bare "-t skyzai"
-                # can resolve to a WINDOW whose name starts with "skyzai" (the
-                # previous seat's), giving "index in use" (2026-10-09).
+                # Exact session plus a trailing colon avoids window-prefix ambiguity.
                 subprocess.run(["tmux", "new-window", "-t", f"={session}:", "-n", title, command],
                                check=True, timeout=15)
                 # Session-qualified, so capture-pane/send-keys cannot hit a
@@ -435,7 +560,7 @@ def spawn(kind: str, title: str, command: str, session: str | None = None) -> tu
             # The boot prompt is passed as argv to the agent CLI, but it does not
             # reliably auto-submit -- the seat then sits at an empty prompt and
             # reads as "stuck" to whoever is watching, when in truth nothing was
-            # ever sent. Happened twice on 2026-09-12.
+            # ever sent.
             #
             # Re-send it ONLY if the pane is actually idle. Sending it
             # unconditionally would double-submit on every seat where argv DID
@@ -485,7 +610,13 @@ def main(argv=None) -> int:
     ap.add_argument("--skip-permissions", action="store_true",
                     help="run CHILD seats with --dangerously-skip-permissions (never the overseer)")
     ap.add_argument("--apply", action="store_true", help="actually launch (otherwise: print the plan)")
+    ap.add_argument("--self-check", action="store_true", help="check startup trust matching offline; launch nothing")
     args = ap.parse_args(argv)
+
+    if args.self_check:
+        _self_check_startup_trust()
+        print("startup trust self-check: passed")
+        return 0
 
     mail_root = os.path.abspath(args.mail_root) if args.mail_root else find_mail_root(os.getcwd())
     if not mail_root or not os.path.isdir(mail_root):
@@ -535,7 +666,7 @@ def main(argv=None) -> int:
             print(f"  skipping {sid}: home does not exist here: {home or '(unset)'}")
             continue
         seat = dict(meta)
-        seat["home"] = home
+        seat["home"] = str(Path(home).resolve())
         seat["id"] = sid
         seat["_local_site"] = local_site
         seat["_skip_permissions"] = bool(args.skip_permissions and meta.get("role") != "parent")
@@ -582,8 +713,7 @@ def main(argv=None) -> int:
     for seat in sorted(chosen, key=lambda s: (s.get("role") != "parent", s["id"])):
         # A seat added to roster.json but never `agentmail-init`ed has no maildir.
         # agentmail-run then exits immediately and the seat is DEAD -- while this
-        # tool cheerfully printed "launched" and "1/1 launched". That happened on
-        # 2026-09-28 and cost a silent restart. Refuse loudly instead, and say the
+        # tool would otherwise report a successful launch. Refuse loudly and say the
         # exact command that fixes it: creating the maildir here would paper over
         # a setup step the operator should know they skipped.
         seat_maildir = os.path.join(mail_root, seat["id"], "new")
@@ -592,6 +722,8 @@ def main(argv=None) -> int:
             print(f"  FAILED    {seat['id']}   no maildir at {os.path.dirname(seat_maildir)}")
             print(f"            fix: {init} -d {mail_root} {seat['id']}")
             continue
+        target = f"{seat['project']}:{seat['id']}" if seat.get("project") else seat["id"]
+        _LAUNCH_CWDS[target] = seat["home"]
         good, detail = spawn(kind, seat["id"], build_command(seat, mail_root),
                              session=seat.get("project"))
         print(f"  {'launched' if good else 'FAILED  '}  {seat['id']}"

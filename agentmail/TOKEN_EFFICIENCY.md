@@ -1,9 +1,10 @@
 # Token efficiency for the overseer + seats fleet
 
-Adopted 2026-09-14 at the operator's direction ("store the information you have collected and add it to IAC").
-Source research: [research/token-efficiency-20260914.md](research/token-efficiency-20260914.md) (Codex Spark seat with live web search; its "verified from source" items were spot-reviewed by the overseer, its blog claims were not adopted).
+This checklist describes reusable coordination practices.
+Private adoption history and original research notes live in ignored `local/`.
+See the [research checklist](research/token-efficiency-20260914.md) for evaluation questions.
 Binding rules live in OPERATIONAL_RULES.md rules 18-19 and 31-39; this file is the reasoning and the checklist.
-Historical model examples below are not current routing instructions; use the approved roster and verified local catalog.
+Use the approved roster and verified local catalog for current runtime/model choices.
 
 ## Where the tokens actually go
 - The overseer's own long context, re-read on every turn (cached reads are cheaper, never free); by far the largest consumer on a busy day.
@@ -18,15 +19,16 @@ Historical model examples below are not current routing instructions; use the ap
 3. Mail discipline: one batched decisions mail; facts peer-to-peer; seats mail at ACK, blocker and DONE only; overseer reads subjects first but opens verdicts, blockers, questions and DONE mails in full immediately.
 4. Keep durable instructions stable and short (AGENTS.md, CLAUDE.md, context/ files) so they are read once per session and caching stays effective; do not churn them mid-session.
 5. Tool output hygiene: send counts and paths, not logs; grep or tail before reading; never paste repeated command output into mail.
-6. Measure: run agentmail/bin/fleet-usage per rule 19 and route work to the runtime and model tier with headroom (Codex Spark or small models for mechanical and research work; Opus or GPT-6-Astra only for hard reasoning or security-critical authoring).
+6. Measure: run agentmail/bin/fleet-usage per rule 19 and route work to the runtime and model tier with headroom according to task fit and site policy.
 7. Idle seats: Claude seats wake on mail through their Monitor watcher (costly with big context); Codex seats do not wake and need one pane nudge; close idle finished seats instead of keeping them warm.
 8. Batch cleared merges into one combined local validation and one push, rather than repeating a full CI wait after every merge.
    Check required completed jobs on the final pushed SHA; cancelled or superseded jobs do not count as green.
 9. Inspect new messages in the same command as an acknowledgement read; never suppress inbox output to stop watcher replay.
    A fast acknowledgement that hides a verdict creates more idle-seat cost than it saves.
 
-## Evaluated but not adopted
-- Explicit Anthropic cache breakpoints and prewarming: applies to direct API integrations, not to Claude Code or Codex CLI seats, which manage caching themselves.
-- The research's model routing example named outdated models (gpt-4o-mini, o3); use the live lineup (agentmail/bin/codex-models and the model-lineup memory).
-- Prompt-compression middleware (leanctx, LLMLingua): claimed 40-60% or larger savings are unverified for CLI agents and risk losing constraints; revisit only with a measured pilot.
-- Adopting AutoGen or CrewAI: high integration cost for no measured gain over AgentMail.
+## Changes that need evidence first
+
+Cache configuration depends on the runtime or API integration and must follow its current official documentation.
+Compression and routing changes need a representative pilot that checks retained constraints, correctness and actual cost.
+Adding an orchestration framework requires evidence of a useful capability beyond the existing protocol helpers.
+Do not publish private per-seat measurements as generic guidance.

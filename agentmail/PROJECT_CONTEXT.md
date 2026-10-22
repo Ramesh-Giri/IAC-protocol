@@ -1,5 +1,8 @@
 # Optional project context: interview, then write six tailored files
 
+This public file is the generic procedure.
+Site-specific project context and standing additions live in ignored `local/PROJECT_CONTEXT.md` or the selected private project, not in this toolkit.
+
 This is an agent-led development onboarding workflow, not an app generator
 or a fixed technology stack. It helps the developer describe the product
 before asking an agent to implement it. Use it from [SETUP_PROMPT.md](SETUP_PROMPT.md)
