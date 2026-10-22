@@ -346,8 +346,8 @@ def render_legend() -> str:
         + '</ul></div></div>'
         '<div class="card"><header><span class="nm">MAILBOX</span><span class="meta">monotone</span></header>'
         '<div class="body"><ul class="tight mini">'
-        + row(g_mailbox("clear", 0), "empty circle", "new/ is clear and a watcher names this seat")
-        + row(g_mailbox("working", 3), "circle with N", "N in new/, oldest under 30 min — working through it")
+        + row(g_mailbox("clear", 0), "empty ring", "new/ is clear and a watcher names this seat")
+        + row(g_mailbox("working", 3), "ring with N", "N in new/, oldest under 30 min — working through it")
         + row(g_mailbox("lagging", 3), "underlined", "oldest unread over 30 min — lagging")
         + row(g_mailbox("deaf", 9), "boxed + underlined", "DEAF: oldest unread over 4h, OR no watcher process, OR cur/ empty while new/ is not")
         + row(g_mailbox("dash", 0), "dash", "no maildir — nothing can be delivered")
@@ -677,7 +677,7 @@ def render_waitgraph(M) -> str:
         elif sid in M["waiting_set"]:
             cls += " wf-n-waiting"
         short = M["short_seat"](sid)
-        parts.append(f'<g class="{cls}"><circle cx="{x:.1f}" cy="{y:.1f}" r="22"/>'
+        parts.append(f'<g class="{cls}"><ellipse cx="{x:.1f}" cy="{y:.1f}" rx="22" ry="22"/>'
                      f'<text x="{x:.1f}" y="{y + 3:.1f}" text-anchor="middle" font-size="8.5" '
                      f'font-family="ui-monospace,Menlo,monospace">{e(short[:9])}</text></g>')
     parts.append("</svg>")

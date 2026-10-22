@@ -3,9 +3,9 @@
 
 The picker in the Codex TUI is authoritative, but it is interactive -- asking the
 operator to open `/model` and screenshot it is not a capability check. The CLI
-caches the same list it renders, so read that instead. 2026-09-12: a web-searched
-model table was wrong on every id, and the supervisor only found out when Ramesh
-sent a screenshot. Enumerate; do not guess, and do not ask him.
+caches the same list it renders, so read that instead.
+Enumerate the local runtime cache rather than guessing model IDs.
+Site-specific incident context lives in ignored local/.
 """
 import json, pathlib, sys
 

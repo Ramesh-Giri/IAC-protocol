@@ -31,3 +31,9 @@
 ## Commands and current availability
 
 {{VERIFIED_COMMANDS_WITH_WORKING_DIRECTORY_OR_CLEARLY_PROPOSED_CHECKS}}
+
+## End-to-end verification
+
+{{USER_ENTRY_POINTS_AND_REALISTIC_TEST_ENVIRONMENT}}
+Reproduce reported bugs through the closest practical end-user flow before fixing them.
+For visual products, verify the intended device/browser and loading, empty, error and responsive states.

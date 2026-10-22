@@ -31,3 +31,8 @@
 ## Open decisions
 
 {{DECISIONS_TO_CONFIRM_AND_CONSEQUENCES}}
+
+## Domain vocabulary
+
+{{NONOBVIOUS_DOMAIN_TERMS_AND_ONE_LINE_DEFINITIONS}}
+Define overloaded terms at their source so agents do not infer product rules from names.

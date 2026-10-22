@@ -80,7 +80,7 @@ Smooth-step path with an arrow marker. Default edge color: `#f8fafc`. Stroke wid
 
 - `rectangle` — default general-purpose node
 - `diamond` — decision / gateway
-- `circle` — event / endpoint
+- `ellipse` — event / endpoint
 - `pill` — service / process
 - `cylinder` — database / storage
 - `hexagon` — external system / boundary

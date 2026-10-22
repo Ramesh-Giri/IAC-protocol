@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 """Report WHERE this agent is actually running: host app, TTY, tmux, job id.
 
-An agent that cannot say where it runs will answer questions about the operator's
-screen with facts about someone else's. 2026-09-12: asked which terminal it was
-in, the overseer reported the only GUI terminal it could see -- which was the
-FLEET's terminal, not its own. It was in fact a background job inside the desktop
-app, attached to no terminal at all. Environment variables alone do not tell you:
-a background session has no TERM_PROGRAM and no TMUX. Walk the process tree.
+Distinguish the current job's host and PTY from another agent's visible terminal.
+Environment variables alone cannot prove ancestry or operator-visible attachment.
+Walk the process tree and label inferred client identity honestly.
+Site-specific incident history lives in ignored local/.
 """
 from __future__ import annotations
 import os, re, subprocess, sys
@@ -107,7 +105,7 @@ def main() -> int:
     # WHICH terminal app owns a tty: resolve the `login` leader's PARENT.
     # Both Terminal.app and iTerm2 spawn `login`, so the presence of a login
     # leader says "a real window" and says NOTHING about which app -- inferring
-    # Terminal.app from it named the wrong application twice on 2026-09-12.
+    # Terminal.app from that evidence alone can name the wrong application.
     def _tty_owner(tty_: str) -> str:
         try:
             rows = subprocess.run(["ps", "-eo", "pid=,tty=,comm="], capture_output=True,

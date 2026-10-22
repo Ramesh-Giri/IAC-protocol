@@ -1,7 +1,9 @@
 # Portable supervisor handoff
 
 This is a reusable handoff contract, not a live project status page.
-Keep real owners, project names, remotes, deployment IDs, seat names and correspondence in the ignored local `conversation-context/` and mail spool.
+Keep real owners, project names, remotes, deployment IDs, seat names and correspondence in ignored `local/`, `conversation-context/` and the mail spool.
+Site-specific additions live in `local/AGENTS.md`, `local/CLAUDE.md` and `local/PROJECT_CONTEXT.md`, not in tracked protocol files.
+Carry the private overlay with a local tooling upgrade before switching a fleet to the new checkout.
 A new developer obtains that private handoff and `projects.local.json` from the workspace owner as described in [onboarding](../ONBOARDING.md).
 Do not copy a runtime's private memory dump into the public toolkit.
 

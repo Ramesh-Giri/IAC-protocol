@@ -113,19 +113,19 @@ the project-by-site mapping need not have every possible combination.
   },
   "agents": {
     "overseer-alice": { "role": "parent",  "site": "alice", "project": null,
-                        "model": "claude-fable-5" },
+                        "model": "STRONGEST MODEL AVAILABLE TO YOU" },
     "overseer-bob":   { "role": "parent",  "site": "bob",   "project": null,
-                        "model": "claude-fable-5" },
+                        "model": "STRONGEST MODEL AVAILABLE TO THEM" },
     "backend-alice":  { "role": "child",   "site": "alice", "project": "backend",
-                        "model": "claude-opus-4-8" },
+                        "model": "TIER MODEL FOR THIS REPO" },
     "backend-bob":    { "role": "child",   "site": "bob",   "project": "backend",
-                        "model": "claude-opus-4-8" },
+                        "model": "TIER MODEL FOR THIS REPO" },
     "app-alice":      { "role": "child",   "site": "alice", "project": "app",
-                        "model": "claude-sonnet-5" },
+                        "model": "TIER MODEL FOR THIS REPO" },
     "app-bob":        { "role": "child",   "site": "bob",   "project": "app",
-                        "model": "claude-sonnet-5" },
+                        "model": "TIER MODEL FOR THIS REPO" },
     "codex-alice":    { "role": "council", "site": "alice", "project": null,
-                        "model": "gpt-codex" }
+                        "model": "APPROVED COUNCIL MODEL" }
   }
 }
 ```

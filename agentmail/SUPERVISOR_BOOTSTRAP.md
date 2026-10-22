@@ -17,18 +17,20 @@ Respect an enforced denial; preserve context and report the precise blocker inst
 
 The human launches the incoming supervisor from their own terminal, outside a restricted outgoing worker's tool.
 Set `IAC_ROOT` and `IAC_MAIN_SEAT` using the local settings described in onboarding.
-Select an installed, approved model explicitly; this example uses the reference Codex workhorse:
+Select an installed, approved model explicitly and store its ID in the private `IAC_MAIN_MODEL` setting:
 
 ```sh
 cd "$IAC_ROOT"
-codex --sandbox workspace-write --ask-for-approval on-request --model gpt-6.1-sol \
+codex --sandbox workspace-write --ask-for-approval on-request --model "$IAC_MAIN_MODEL" \
   "You are $IAC_MAIN_SEAT, the incoming supervisor. Read the local main instructions and latest conversation-context handoff. Complete agentmail/SUPERVISOR_BOOTSTRAP.md capability checks before accepting inbox ownership or claiming a visible fleet is running."
 ```
 
 On-request enables a supported approval path; it does not grant host control or override managed policy.
 If effective policy remains restrictive, report that mismatch and keep takeover explicitly incomplete.
-Do not execute the legacy `overseer-astra.command`, `overseer-codex.command` or `fleet-start.command` unchanged: they contain site-specific assumptions, and some select incompatible permissions or destructively reset a session.
-A documentation update is not a launcher repair.
+The tracked main-seat wrappers read local settings and preview the roster launcher by default.
+Review the plan and effective supervisor permissions before using `--apply`.
+`fleet-start.command` takes explicit roster seats and preserves existing sessions; use it only through the site's approved launch process.
+Original site scripts and model pins remain in ignored `local/`.
 
 ## Required checks
 
@@ -63,7 +65,9 @@ Capture pane IDs at creation and verify the seat title before targeting them.
 Inspect an `agentmail-launch --terminal tmux` dry-run before any authorized `--apply`.
 Codex workers omit `--skip-permissions`; Claude-specific bypass arguments are not portable and require existing authorization and safeguards.
 Keep the supervisor's interactive profile separate from unattended workers.
-The current launcher has a known branch that sends a trust key when hook-review wording appears; do not run that branch or describe it as safe automation.
+The launcher types or submits only on an allowlisted idle composer (or confirms an exact-cwd folder dialog); every other nonempty startup screen gets one Escape and one warning with the seat and last three lines, then stops.
+Every key, including a literal boot-prompt resend, requires a successful nonempty capture and a fresh trust check.
+Folder trust is accepted only for the exact launch directory; hook trust remains a human action through /hooks.
 Changed-hook or new-folder trust is a human action; use a supported dismiss/continue-without-trusting path, or report the block.
 Never disable safeguards to clear a prompt.
 Submit boot/nudge text and Enter separately, then confirm Working and the task ACK.

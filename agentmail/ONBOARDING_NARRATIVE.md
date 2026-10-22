@@ -27,7 +27,8 @@ The script validates metadata and preserves checkout state; it is not an operati
 Existing Git hooks and configured credential helpers remain the developer's responsibility; no hook is disabled to perform setup.
 Dry-run checks only local state and cannot prove access or that the remote branch/deployment exists.
 Unknown production mappings remain private handoff questions.
-Legacy launcher/guard defects are documented but not repaired in this scope.
+Site-specific launch settings and historical defects belong in the ignored local handoff.
+Verify the currently reviewed helper behavior before use.
 
 ## Verification
 
