@@ -38,6 +38,8 @@ contracts or standards change. In `progress-tracker.md`, record actual
 completion with evidence, blockers, decisions and the next actionable step.
 Plans are not completed work; file existence is not proof tests passed.
 
+Main agents keep one `<project-context-dir>/OPERATOR_REQUESTS.md` ledger per operator across runtimes; follow [AgentMail operational rule 40](../../OPERATIONAL_RULES.md#40-keep-one-operator-requests-ledger).
+
 ## Document what you touch, report what you changed
 
 - A source file you edit without a header doc comment gets one in the same
