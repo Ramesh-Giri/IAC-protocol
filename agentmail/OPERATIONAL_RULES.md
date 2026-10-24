@@ -329,4 +329,12 @@ For a human-run step, draft complete TYPE-THIS instructions with location, expec
 Do not request credentials or weaken checks to prove a test.
 Ordinary authorized Git, build and verification work stays with its designated agent owner.
 
+## 40. Keep one operator requests ledger
+
+Every main agent, on any runtime, keeps one ledger per operator at `<project-context-dir>/OPERATOR_REQUESTS.md`, reused across runtime changes.
+Add a row the moment the operator asks for a task, research or a decision, before dispatching it.
+Keep Open/waiting, Parked and Done tables with R- / P- / D- ids, date, request, status (`OPEN | WAITING-OPERATOR | DONE | PARKED`) and result path or next step.
+Seat DONE mails state the result path on their first body line; move the row to Done with that path before replying to the operator.
+Show `OPEN` and `WAITING-OPERATOR` items at session start, at handover (rule 23 handoffs link the ledger) and whenever the operator asks for status.
+
 Revision: public rules generalized; original site-specific rules are preserved in the ignored local overlay.
