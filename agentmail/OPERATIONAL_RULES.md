@@ -347,4 +347,14 @@ Each web repository also asserts its security headers through a contract test in
 Contact mailboxes displayed in products must exist and accept mail; DNS records alone do not prove delivery.
 Follow [WEBSEC.md](WEBSEC.md) for the inventory format, check coverage and preview CI example.
 
+## 42. Subagent branches never outlive their task
+
+The operator must not have to see or clean up branches that subagents created.
+When a subagent finishes, the main agent (through its integrator) verifies and reviews the work, merges it into the project's integration branch (main, or the repo's documented development branch), runs the normal hooks and post-merge checks, and deletes the branch locally and on the remote in the same step.
+Work that still needs independent review may live on a remote feature branch only while that review is in flight; after a PASS it is merged and the branch is deleted, and after a BLOCK the fix lands on the same branch and the cycle repeats.
+Docs, context folders and other verified low-risk changes go straight to the integration branch without a side branch.
+Unfinished or abandoned work is preserved on local-only branches or patch files, never pushed as remote branches.
+At session start the main agent lists remote branches created by its own agents, merges or deletes them, and reports anything it cannot resolve.
+Never bypass hooks to merge, and never delete a branch whose commits are not contained in the integration branch or preserved elsewhere.
+
 Revision: public rules generalized; original site-specific rules are preserved in the ignored local overlay.
