@@ -337,4 +337,14 @@ Keep Open/waiting, Parked and Done tables with R- / P- / D- ids, date, request, 
 Seat DONE mails state the result path on their first body line; move the row to Done with that path before replying to the operator.
 Show `OPEN` and `WAITING-OPERATOR` items at session start, at handover (rule 23 handoffs link the ledger) and whenever the operator asks for status.
 
+## 41. Check public web and mail security regularly
+
+Every web project lists its public hosts, production paths and mail domains in the site's ignored `local/websec.local.json` inventory.
+Run `agentmail/bin/websec-check` at main-agent session start, weekly, and before reporting a web deploy or release complete.
+Every FAIL becomes a tracked task with an owner and evidence; a failed or incomplete check cannot support a completion claim.
+Record accepted edge exceptions with a reason and expiry date, and review WARN results explicitly.
+Each web repository also asserts its security headers through a contract test in CI against a deployed preview, including error paths; an external periodic check alone is insufficient.
+Contact mailboxes displayed in products must exist and accept mail; DNS records alone do not prove delivery.
+Follow [WEBSEC.md](WEBSEC.md) for the inventory format, check coverage and preview CI example.
+
 Revision: public rules generalized; original site-specific rules are preserved in the ignored local overlay.

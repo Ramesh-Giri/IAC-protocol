@@ -1,0 +1,421 @@
+#!/usr/bin/env python3
+"""Check public web/mail security from a private local JSON inventory.
+
+main owns CLI/config and emits evidence for operators and CI. Stdlib HTTPS is
+IP-pinned through PublicHTTPS; openssl probes the same vetted public IP.
+No credentials, redirects, installs, configuration changes or Git writes.
+"""
+from __future__ import annotations
+
+import argparse
+from datetime import date, datetime, timezone
+import http.client
+import ipaddress
+import json
+from pathlib import Path
+import re
+import secrets
+import socket
+import ssl
+import subprocess
+import sys
+import time
+from urllib.parse import urlencode
+
+VERSION = "1.0.0"
+ROOT = Path(__file__).resolve().parents[2]
+TIMEOUT = 10
+BODY_LIMIT = 2 * 1024 * 1024
+DNS_TYPES = {"A": 1, "AAAA": 28, "TXT": 16, "MX": 15, "CAA": 257}
+CBC = ":".join(f"{prefix}AES{bits}-{digest}"
+               for prefix in ("", "ECDHE-RSA-", "ECDHE-ECDSA-", "DHE-RSA-")
+               for bits in (128, 256) for digest in ("SHA", "SHA256", "SHA384"))
+
+
+def result(target, check, status, evidence):
+    return dict(target=target, check=check, status=status, evidence=evidence)
+
+
+def domain(value):
+    if not isinstance(value, str) or not value or len(value) > 253:
+        raise ValueError("host/domain must be a DNS name")
+    value = value.encode("idna").decode("ascii").lower()
+    if not re.fullmatch(r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]{2,63}", value):
+        raise ValueError("host/domain must be a DNS name without scheme, port or credentials")
+    return value
+
+
+def public_ip(value):
+    addr = ipaddress.ip_address(value)
+    if (not addr.is_global or addr.is_multicast or addr.is_reserved
+            or isinstance(addr, ipaddress.IPv6Address) and addr.ipv4_mapped):
+        raise ValueError(f"blocked non-public address: {value}")
+    return str(addr)
+
+
+class DeadlineReader:
+    """Bound every HTTP read by the request's original deadline, even slow headers."""
+    def __init__(self, sock, deadline):
+        self.sock, self.deadline = sock, deadline
+
+    def read1(self, size=-1):
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("HTTPS total timeout")
+        self.sock.settimeout(remaining)
+        return self.sock.recv(1 if size < 0 else min(size, 65536))
+
+    def read(self, size=-1):
+        chunks = bytearray()
+        while size < 0 or len(chunks) < size:
+            chunk = self.read1(65536 if size < 0 else size - len(chunks))
+            if not chunk:
+                break
+            chunks.extend(chunk)
+        return bytes(chunks)
+
+    def readline(self, limit=-1):
+        data = bytearray()
+        while limit < 0 or len(data) < limit:
+            char = self.read(1)
+            if not char:
+                break
+            data.extend(char)
+            if char == b"\n":
+                break
+        return bytes(data)
+
+    def flush(self):
+        pass
+
+    def close(self):
+        pass
+
+
+class ResponseSocket:
+    def __init__(self, sock, deadline):
+        self.reader = DeadlineReader(sock, deadline)
+
+    def makefile(self, *args, **kwargs):
+        return self.reader
+
+
+class PublicHTTPS:
+    """Single bounded fetch path; fixed DoH bootstrap avoids local DNS/rebinding."""
+    def request(self, host, path, ip, accept="*/*", limit=BODY_LIMIT):
+        host, ip = domain(host), public_ip(ip)
+        if not path.startswith("/") or path.startswith("//") or any(ord(c) < 33 or ord(c) > 126 for c in path) or "#" in path:
+            raise ValueError("path must be an ASCII absolute path without whitespace or fragment")
+        deadline = time.monotonic() + TIMEOUT
+        try:
+            with socket.create_connection((ip, 443), timeout=TIMEOUT) as raw:
+                raw.settimeout(max(0.001, deadline - time.monotonic()))
+                with ssl.create_default_context().wrap_socket(raw, server_hostname=host) as sock:
+                    cert = sock.getpeercert()
+                    sock.settimeout(max(0.001, deadline - time.monotonic()))
+                    sock.sendall((f"GET {path} HTTP/1.1\r\nHost: {host}\r\nAccept: {accept}\r\n"
+                                  "User-Agent: IAC-websec-check/1\r\nConnection: close\r\n\r\n").encode("ascii"))
+                    response = http.client.HTTPResponse(ResponseSocket(sock, deadline))
+                    response.begin()
+                    headers = response.getheaders()
+                    if response.length is not None and response.length > limit:
+                        raise ValueError(f"response exceeds {limit} bytes")
+                    body = bytearray()
+                    while True:
+                        chunk = response.read1(min(65536, limit + 1 - len(body)))
+                        if not chunk:
+                            break
+                        body.extend(chunk)
+                        if len(body) > limit:
+                            raise ValueError(f"response exceeds {limit} bytes")
+                    print(f"fetch caller=websec-check host={host} path={path.split('?')[0]} ip={ip} status={response.status}", file=sys.stderr)
+                    return response.status, headers, bytes(body), cert
+        except Exception as exc:
+            print(f"fetch caller=websec-check host={host} path={path.split('?')[0]} ip={ip} error={type(exc).__name__}", file=sys.stderr)
+            raise
+
+    def dns(self, name, kind):
+        if not isinstance(name, str) or not re.fullmatch(r"[a-zA-Z0-9_.-]{1,253}", name):
+            raise ValueError("invalid DNS question name")
+        path = "/dns-query?" + urlencode({"name": name, "type": kind})
+        status, _, body, _ = self.request("cloudflare-dns.com", path, "1.1.1.1", "application/dns-json", 262144)
+        if status != 200:
+            raise ValueError(f"DoH HTTP {status}")
+        data = json.loads(body)
+        if data.get("Status") not in (0, 3) or data.get("TC"):
+            raise ValueError(f"DoH failed/truncated: DNS status {data.get('Status')}")
+        answers = [r["data"] for r in data.get("Answer", []) if r.get("type") == DNS_TYPES[kind]]
+        if kind == "TXT":
+            answers = [decode_txt(item) for item in answers]
+        return answers
+
+    def resolve(self, host):
+        addresses = self.dns(host, "A") + self.dns(host, "AAAA")
+        if not addresses:
+            raise ValueError("no public A/AAAA answer")
+        return [public_ip(value) for value in addresses]
+
+
+def decode_txt(value):
+    # DoH represents a multi-string TXT RR as adjacent quoted DNS strings.
+    parts = re.findall(r'"((?:\\.|[^"\\])*)"', value)
+    if not parts or re.sub(r'"(?:\\.|[^"\\])*"\s*', '', value).strip():
+        raise ValueError("malformed DNS TXT presentation")
+    def unescape(match):
+        value = match.group(1)
+        return chr(int(value)) if len(value) == 3 and value.isdigit() else value
+    return "".join(re.sub(r"\\(\d{3}|.)", unescape, part) for part in parts)
+
+
+def openssl_result(output):
+    protocol = re.search(r"(?:Protocol\s*:\s*|Protocol version:\s*)(TLSv[\d.]+)", output)
+    cipher = re.search(r"(?:Cipher\s*:\s*|Ciphersuite:\s*|Cipher is\s+)([^\s]+)", output)
+    if cipher and cipher.group(1) not in ("(NONE)", "0000", "NONE"):
+        version = protocol.group(1) if protocol else "unknown TLS version"
+        return "accepted", f"{version} {cipher.group(1)}"
+    if re.search(r"unknown option|unrecognized option|no cipher match|no ciphers available|no protocols available|unsupported protocol|library has no ciphers|legacy sigalg disallowed|no suitable signature algorithm", output, re.I):
+        return "inconclusive", "local OpenSSL cannot offer this probe"
+    alert = re.search(r"(?:alert protocol version|alert handshake failure|alert insufficient security)[^\r\n]*", output, re.I)
+    if alert:
+        return "refused", alert.group(0)
+    return "inconclusive", "no negotiated cipher or explicit peer rejection"
+
+
+def tls_probe(host, ip, flag, cipher):
+    endpoint = f"[{ip}]:443" if ":" in ip else f"{ip}:443"
+    command = ["openssl", "s_client", "-connect", endpoint, "-servername", host,
+               flag, "-cipher", cipher, "-brief"]
+    try:
+        run = subprocess.run(command, input="", capture_output=True, text=True, timeout=TIMEOUT)
+        return openssl_result(run.stdout + run.stderr)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return "inconclusive", f"probe {type(exc).__name__}; install/use a capable OpenSSL or retry network"
+
+
+def header_checks(target, status, pairs):
+    headers = {}
+    for key, value in pairs:
+        headers.setdefault(key.lower(), []).append(value.strip())
+    rows = []
+    def add(check, ok, evidence, warn=False):
+        rows.append(result(target, check, "PASS" if ok else "WARN" if warn else "FAIL", evidence))
+    def single(name):
+        values = headers.get(name, [])
+        return values[0] if len(values) == 1 else ""
+    add("http-status", status < 500, str(status))
+    if 300 <= status < 400:
+        rows.append(result(target, "redirect", "WARN", "redirect not followed; configure destination paths separately"))
+    hsts = single("strict-transport-security")
+    ages = re.findall(r"(?:^|;)\s*max-age\s*=\s*\"?(\d+)\"?\s*(?=;|$)", hsts, re.I)
+    add("hsts", len(ages) == 1 and int(ages[0]) >= 31536000, hsts or "missing/duplicate HSTS")
+    csp = headers.get("content-security-policy", [])
+    report = headers.get("content-security-policy-report-only", [])
+    ancestors = []
+    for policy in csp:
+        # Browsers use the first occurrence of a directive in each policy.
+        for directive in policy.split(";"):
+            tokens = directive.split()
+            if tokens and tokens[0].lower() == "frame-ancestors":
+                ancestors.append(tokens[1:])
+                break
+    framing = single("x-frame-options").upper()
+    valid_ancestors = any(tokens and "*" not in tokens for tokens in ancestors)
+    add("framing", framing in ("DENY", "SAMEORIGIN") or valid_ancestors,
+        f"X-Frame-Options={headers.get('x-frame-options', [])}; frame-ancestors={ancestors}")
+    all_ancestors = re.findall(r"(?:^|;)\s*frame-ancestors\s+([^;]*)", ";".join(csp + report), re.I)
+    local = re.search(r"localhost|127\.|\[::1\]|0\.0\.0\.0", " ".join(all_ancestors), re.I)
+    add("frame-ancestors-public", not local, " ".join(all_ancestors) or "no local framing sources")
+    add("nosniff", single("x-content-type-options").lower() == "nosniff",
+        str(headers.get("x-content-type-options", [])))
+    referrer = single("referrer-policy")
+    policies = {"no-referrer", "no-referrer-when-downgrade", "origin", "origin-when-cross-origin", "same-origin", "strict-origin", "strict-origin-when-cross-origin", "unsafe-url"}
+    add("referrer-policy", any(token.strip().lower() in policies for token in referrer.split(",")), referrer or "missing/duplicate")
+    add("csp", bool(csp and all(value.strip() for value in csp)),
+        str(csp or report or "missing"), warn=bool(report))
+    return rows
+
+
+def tags(record):
+    parsed = {}
+    for part in record.split(";"):
+        if not part.strip():
+            continue
+        if "=" not in part:
+            raise ValueError("malformed policy tag")
+        key, value = (s.strip() for s in part.split("=", 1))
+        key = key.lower()
+        if key in parsed:
+            raise ValueError("duplicate policy tag")
+        parsed[key] = value
+    return parsed
+
+
+def mail_checks(name, txt, dmarc, mx, caa, advertised=False, dkim=None):
+    rows = []
+    def add(check, status, evidence):
+        rows.append(result(name, check, status, evidence))
+    policies = [r for r in dmarc if r.lower().startswith("v=dmarc1")]
+    policy = {}
+    try:
+        if len(policies) == 1:
+            policy = tags(policies[0])
+    except ValueError:
+        pass
+    valid = policy.get("v") == "DMARC1" and policy.get("p") in ("none", "quarantine", "reject")
+    try:
+        pct = int(policy.get("pct", "100"))
+        valid = valid and 0 <= pct <= 100
+    except ValueError:
+        pct, valid = 0, False
+    enforcing = valid and policy.get("p") in ("quarantine", "reject") and pct == 100
+    add("dmarc", "FAIL" if not valid else "PASS" if enforcing else "WARN", "; ".join(policies) or "missing DMARC")
+    spf = [r for r in txt if re.match(r"^v=spf1(?:\s|$)", r, re.I)]
+    terminal = spf[0].split()[-1] if len(spf) == 1 else ""
+    valid_spf = terminal in ("-all", "~all") and not any(re.fullmatch(r"[+?~-]?all", word, re.I) for word in spf[0].split()[1:-1])
+    add("spf", "FAIL" if not valid_spf else "WARN" if terminal == "~all" and not enforcing else "PASS", "; ".join(spf) or "missing SPF")
+    usable_mx = [record for record in mx if record.strip() != "0 ."]
+    if advertised:
+        add("contact-mx", "PASS" if usable_mx else "FAIL", "; ".join(mx) or "advertised contacts have no MX; verify mailbox existence separately")
+        if not usable_mx:
+            hardened = spf == ["v=spf1 -all"] and valid and policy.get("p") == "reject" and pct == 100
+            add("nonmail-domain", "PASS" if hardened else "FAIL", f"SPF={spf}; DMARC={policies}; requires v=spf1 -all and p=reject")
+    add("caa", "PASS" if caa else "WARN", "; ".join(caa) or "missing CAA")
+    if dkim is not None:
+        keys = []
+        for record in dkim:
+            try:
+                key = tags(record)
+                if key.get("p") and key.get("v", "DKIM1") == "DKIM1":
+                    keys.append(record)
+            except ValueError:
+                pass
+        add("dkim", "PASS" if len(keys) == 1 and len(dkim) == 1 else "FAIL", "; ".join(dkim) or "configured selector missing")
+    return rows
+
+
+def validate_config(config):
+    if not isinstance(config, dict) or set(config) - {"web_hosts", "mail_domains"}:
+        raise ValueError("config keys: web_hosts, mail_domains")
+    for key in ("web_hosts", "mail_domains"):
+        if not isinstance(config.get(key, []), list):
+            raise ValueError(f"{key} must be an array")
+    if not config.get("web_hosts") and not config.get("mail_domains"):
+        raise ValueError("inventory is empty; configure at least one web host or mail domain")
+    for entry in config.get("web_hosts", []):
+        if not isinstance(entry, dict) or set(entry) - {"host", "paths", "exceptions"}:
+            raise ValueError("web host keys: host, paths, exceptions")
+        entry["host"] = domain(entry.get("host"))
+        paths = entry.get("paths", ["/"])
+        if not isinstance(paths, list) or not paths or any(not isinstance(p, str) or not p.startswith("/") or p.startswith("//") or "#" in p or any(ord(c) < 33 or ord(c) > 126 for c in p) for p in paths):
+            raise ValueError("paths must be a nonempty array of ASCII absolute URL paths")
+        exceptions = entry.get("exceptions", {})
+        if not isinstance(exceptions, dict) or set(exceptions) - {"tls12-cbc"}:
+            raise ValueError("only tls12-cbc edge exceptions are supported")
+        for exception in exceptions.values():
+            if not isinstance(exception, dict) or set(exception) != {"reason", "expires"} or not isinstance(exception["reason"], str) or not exception["reason"].strip():
+                raise ValueError("exception requires reason and expires (YYYY-MM-DD)")
+            if not isinstance(exception["expires"], str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", exception["expires"]):
+                raise ValueError("exception expires must be YYYY-MM-DD")
+            date.fromisoformat(exception["expires"])
+    for entry in config.get("mail_domains", []):
+        if not isinstance(entry, dict) or set(entry) - {"domain", "dkim_selector", "advertised_contacts"}:
+            raise ValueError("mail domain keys: domain, dkim_selector, advertised_contacts")
+        entry["domain"] = domain(entry.get("domain"))
+        if "advertised_contacts" in entry and not isinstance(entry["advertised_contacts"], bool):
+            raise ValueError("advertised_contacts must be boolean")
+        if "dkim_selector" in entry and not re.fullmatch(r"[a-zA-Z0-9_-]{1,63}", entry["dkim_selector"]):
+            raise ValueError("dkim_selector must be one DNS label")
+    return config
+
+
+def apply_exception(row, exception, today):
+    if date.fromisoformat(exception["expires"]) < today:
+        return result(row["target"], "tls12-cbc-exception", "FAIL", f"{row['evidence']}; expired {exception['expires']}: {exception['reason']}")
+    if row["status"] == "FAIL" and row["evidence"].startswith("accepted:"):
+        return result(row["target"], row["check"], "WARN", f"{row['evidence']}; accepted until {exception['expires']}: {exception['reason']}")
+    return row
+
+
+def check_web(entry, client, today):
+    host, rows = entry["host"], []
+    try:
+        addresses = client.resolve(host)
+    except (OSError, ValueError, http.client.HTTPException) as exc:
+        return [result(host, "dns", "FAIL", str(exc))]
+    # One IP is a sample of this edge, not an assertion about every anycast region.
+    ip = addresses[0]
+    rows.append(result(host, "dns", "PASS", f"public answers={addresses}; sampled={ip}"))
+    for check, flag, cipher in (("tls10", "-tls1", "ALL:@SECLEVEL=0"),
+                                ("tls11", "-tls1_1", "ALL:@SECLEVEL=0"),
+                                ("tls12-cbc", "-tls1_2", CBC + ":@SECLEVEL=0")):
+        state, evidence = tls_probe(host, ip, flag, cipher)
+        row = result(host, check, "PASS" if state == "refused" else "FAIL", f"{state}: {evidence}")
+        exception = entry.get("exceptions", {}).get(check)
+        if exception:
+            row = apply_exception(row, exception, today)
+        rows.append(row)
+    paths = list(dict.fromkeys(entry.get("paths", ["/"]) + ["/.well-known/websec-missing-" + secrets.token_hex(12)]))
+    for path in paths:
+        target = host + path
+        try:
+            status, headers, _, cert = client.request(host, path, ip)
+            expiry = datetime.fromtimestamp(ssl.cert_time_to_seconds(cert["notAfter"]), timezone.utc)
+            days = (expiry - datetime.now(timezone.utc)).total_seconds() / 86400
+            rows.append(result(target, "certificate", "PASS" if days > 21 else "FAIL", f"verified hostname/chain; expires={expiry.isoformat()}; days={days:.1f}"))
+            rows.extend(header_checks(target, status, headers))
+        except (OSError, ValueError, KeyError, http.client.HTTPException) as exc:
+            rows.append(result(target, "https", "FAIL", str(exc)))
+    return rows
+
+
+def run_checks(config):
+    client, rows = PublicHTTPS(), []
+    for entry in config.get("web_hosts", []):
+        rows.extend(check_web(entry, client, datetime.now(timezone.utc).date()))
+    for entry in config.get("mail_domains", []):
+        name = entry["domain"]
+        try:
+            txt, dmarc = client.dns(name, "TXT"), client.dns("_dmarc." + name, "TXT")
+            mx, caa = client.dns(name, "MX"), client.dns(name, "CAA")
+            selector = entry.get("dkim_selector")
+            dkim = client.dns(selector + "._domainkey." + name, "TXT") if selector else None
+            rows.extend(mail_checks(name, txt, dmarc, mx, caa, entry.get("advertised_contacts", False), dkim))
+        except (OSError, ValueError, KeyError, http.client.HTTPException) as exc:
+            rows.append(result(name, "dns-mail", "FAIL", str(exc)))
+    return rows
+
+
+def emit(rows, as_json):
+    counts = {status: sum(row["status"] == status for row in rows) for status in ("PASS", "WARN", "FAIL")}
+    if as_json:
+        print(json.dumps({"checks": rows, "summary": counts}, ensure_ascii=True))
+    else:
+        for row in rows:
+            # JSON-quoted evidence keeps control characters on one physical line.
+            print(f"{row['status']} {row['target']} {row['check']}: {json.dumps(row['evidence'], ensure_ascii=True)}")
+        print("summary: " + " ".join(f"{key}={value}" for key, value in counts.items()))
+    return 1 if counts["FAIL"] else 0
+
+
+class Parser(argparse.ArgumentParser):
+    def error(self, message):
+        emit([result("config", "usage", "FAIL", message + "; use websec-check --help")], "--json" in sys.argv)
+        raise SystemExit(2)
+
+
+def main(argv=None):
+    parser = Parser(description=__doc__, epilog="Examples: websec-check; websec-check --config local/websec.local.json --json", allow_abbrev=False)
+    parser.add_argument("--config", type=Path, default=ROOT / "local/websec.local.json", help="private JSON inventory (default: repository local/websec.local.json)")
+    parser.add_argument("--json", action="store_true", help="machine-readable checks and PASS/WARN/FAIL counts")
+    parser.add_argument("-v", "-V", "--version", action="version", version=VERSION)
+    args = parser.parse_args(argv)
+    try:
+        config = validate_config(json.loads(args.config.read_text()))
+    except (OSError, ValueError, TypeError) as exc:
+        emit([result("config", "inventory", "FAIL", f"{exc}; copy local/websec.local.example.json to local/websec.local.json and edit it")], args.json)
+        return 2
+    return emit(run_checks(config), args.json)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

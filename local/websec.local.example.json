@@ -1,0 +1,21 @@
+{
+  "web_hosts": [
+    {
+      "host": "example.com",
+      "paths": ["/", "/account"],
+      "exceptions": {
+        "tls12-cbc": {
+          "reason": "Example only: managed edge has no CBC configuration; review with its owner",
+          "expires": "2027-01-01"
+        }
+      }
+    }
+  ],
+  "mail_domains": [
+    {
+      "domain": "example.com",
+      "advertised_contacts": true,
+      "dkim_selector": "default"
+    }
+  ]
+}
