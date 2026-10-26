@@ -78,4 +78,8 @@ bin/__pycache__/
 bin/*.pyc
 
 # Private site instructions, policy, inventory and preserved originals.
-/local/
+# Only the generic websec example and folder guidance are public.
+!/local/
+/local/*
+!/local/README.md
+!/local/websec.local.example.json
