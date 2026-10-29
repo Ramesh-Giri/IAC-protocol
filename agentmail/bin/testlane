@@ -50,13 +50,17 @@ class Error(Exception):
 
 def environment(install=False):
     env = {k: os.environ[k] for k in ("PATH", "HOME", "TMPDIR", "PUB_CACHE",
-                                     "FLUTTER_ROOT", "JAVA_HOME", "ANDROID_HOME")
+                                     "FLUTTER_ROOT", "JAVA_HOME", "ANDROID_HOME",
+                                     "TFJS_NODE_CDN_STORAGE")
            if k in os.environ}
     env.update(CI="true", GIT_TERMINAL_PROMPT="0", LANG="en_US.UTF-8",
                FLUTTER_SUPPRESS_ANALYTICS="true", DART_SUPPRESS_ANALYTICS="true",
                npm_config_yes="false", npm_config_audit="false", npm_config_fund="false")
     if not install:
         env["npm_config_offline"] = "true"
+    else:
+        # use the local cache first; a slow registry otherwise hangs every lane
+        env["npm_config_prefer_offline"] = "true"
     return env
 
 
@@ -340,9 +344,18 @@ class Lane:
                 h.update(bytes([p.exists()]) + len(data).to_bytes(8, "big") + data)
             digest = h.hexdigest()
             present = (self.path / names[0]).exists()
-            cache = self.path / (".dart_tool" if kind == "flutter" else "functions/node_modules")
-            if present and (state["hashes"].get(kind) != digest or not cache.is_dir()):
-                command = ["flutter", "pub", "get"] if kind == "flutter" else ["npm", "ci"]
+            # completion markers, not bare dirs: an interrupted install leaves the dir behind
+            cache = self.path / (".dart_tool/package_config.json" if kind == "flutter"
+                                 else "functions/node_modules/.package-lock.json")
+            if present and (state["hashes"].get(kind) != digest or not cache.is_file()):
+                # --ignore-scripts: matches this project's own documented Functions install
+                # recipe. Without it, @tensorflow/tfjs-node's postinstall fetches a native
+                # binary from storage.googleapis.com that this environment cannot reliably
+                # reach, which SIGTERMs the whole warm-up job. The module is loaded only via
+                # a dynamic import() inside useModel.ts, never at require-time, so skipping
+                # its postinstall does not affect any test that doesn't call loadModel().
+                command = (["flutter", "pub", "get"] if kind == "flutter"
+                           else ["npm", "ci", "--ignore-scripts"])
                 command[0] = executable(command[0], self.path)
                 cwd = self.path if kind == "flutter" else self.path / "functions"
                 if run_process(command, cwd, log, MAX_TIMEOUT, install=True):
