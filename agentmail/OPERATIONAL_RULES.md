@@ -357,4 +357,18 @@ Unfinished or abandoned work is preserved on local-only branches or patch files,
 At session start the main agent lists remote branches created by its own agents, merges or deletes them, and reports anything it cannot resolve.
 Never bypass hooks to merge, and never delete a branch whose commits are not contained in the integration branch or preserved elsewhere.
 
+## 43. Test-driven development, then an independent break pass
+
+Every code change in every project is built test-first: write the failing test, watch it fail, make it pass, then refactor.
+Unit tests cover each unit's behavior and edge cases; integration tests cover the feature across its real boundaries (API to storage, client to server contract, native bridge, payment rail) with fakes only at external providers.
+A change report (rule 27) lists, per requirement, the test that failed first and the command and result that show it passing; a change without both test levels is not done.
+When a feature's tests pass and its normal review is complete, a separate break pass runs before merge.
+The break pass is read-only and run by a seat that did not write the code, on the other provider where possible: it acts as a senior adversarial tester whose only job is to find how the feature fails, not to fix it.
+It probes inputs, states, ordering, concurrency, permissions, money and key paths, failure and recovery, abuse and cost, and user-visible defects, and writes `BREAK.md` with numbered findings: severity, exact reproduction, impact, and a proposed failing test that would prove the defect.
+Phrase break briefs as requirements plus regression fixtures to find, never as instructions to attack a live system; the pass touches local code and fakes only.
+The main agent then triages every finding with the author and the operator: fix, accept with reason, or reject with evidence, recorded in a triage table beside `BREAK.md`.
+Each accepted fix starts with the finding's failing test (TDD again), and a short re-break covers the fixed findings only.
+Nothing merges while a finding is untriaged or an accepted fix is unverified.
+Independent features run in parallel batches (author, review and break seats), within the host's seat and shared test-lane limits (rule 29); triage is batched for the operator as one list with a recommendation per finding.
+
 Revision: public rules generalized; original site-specific rules are preserved in the ignored local overlay.
