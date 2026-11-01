@@ -371,4 +371,26 @@ Each accepted fix starts with the finding's failing test (TDD again), and a shor
 Nothing merges while a finding is untriaged or an accepted fix is unverified.
 Independent features run in parallel batches (author, review and break seats), within the host's seat and shared test-lane limits (rule 29); triage is batched for the operator as one list with a recommendation per finding.
 
+## 44. Delegate complete outcomes and keep the overseer available
+
+This standing instruction applies to every main-agent runtime and its delegated workers.
+The overseer allocates scoped outcomes, priorities, boundaries and acceptance criteria, verifies completion and handles genuine exceptions while remaining available to the operator.
+Implementation, research, setup, patch intake, integration, builds, testing and workflow analysis belong to the assigned child or integrator, rather than becoming the overseer's routine execution work.
+Within an accepted assignment, workers own the complete fix, caller/fixture correction, retest and handoff cycle without requesting parent permission for each reversible in-scope step.
+Delegate test capacity for the task within the existing shared limits so that an unchanged scope does not need another micro-permit for every focused rerun.
+Named peers may coordinate evidence, source handoffs, review requests and freeze/capacity windows directly within their existing delegated authority; they may not expand scope or make external commitments.
+Keep one writer per worktree, genuine RED/GREEN evidence, source freezes through actual client/exporter exit, and independent normal and break review before merge.
+A finished or polling-only worker must be woken through the approved idle-session procedure when new mail arrives; sending mail alone is not proof that it resumed.
+Send main meaningful milestones, a concise completed result with evidence, or a genuine blocker; do not turn routine reporting into a permission loop.
+Preserve raw run evidence per attempt, but batch narrative reports, maps and acceptance-ledger updates once the feature is stable rather than repackaging unchanged history per small fix.
+Escalate genuine security or contract uncertainty, an actual runtime denial, scope changes and Layer-3 decisions immediately.
+While an accepted outcome remains open, a worker waiting for a named peer input or shared capacity keeps its current task turn active with supported bounded waits and mail checks.
+It must not issue a final response merely because that input has not arrived yet.
+The overseer verifies the next worker has read the handoff, acknowledged the exact input and actually resumed Working before treating a handoff as moving.
+Unread mail, a running mail-watch process and an attached terminal are not proof of progress.
+The overseer must not end an active completion run with known runnable handoffs left unprocessed; process arrival alerts and reconcile idle seats before yielding.
+If runtime limits prevent continued supervision or wake delivery, report the exact stopped state and preserved next step before handing back control, and never claim unattended monitoring remains active.
+Completed units still close after verified evidence and process exit; this waiting rule does not retain finished seats for speculative future work.
+This rule does not waive mandatory independent review, safeguards, runtime restrictions, or the human-only cloud and deployment boundary.
+
 Revision: public rules generalized; original site-specific rules are preserved in the ignored local overlay.
