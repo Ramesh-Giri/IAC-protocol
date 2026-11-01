@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""agentmail-launch — start every seat in the roster, one named terminal each,
+"""agentmail-launch - start every seat in the roster, one named terminal each,
 with the model and permission mode that seat was assigned.
 
     agentmail-launch [--all | --seat ID ...] [--overseer] [--apply]
@@ -29,6 +29,13 @@ WHAT IT GUARANTEES
     * THE OVERSEER NEVER GETS --dangerously-skip-permissions. It is the seat a
       human talks to and the one that approves things; it prompts, always, and
       this tool will refuse to do otherwise.
+
+    build_command assembles argv; spawn creates the window, then checks tmux
+    startup through fresh captures before each key. Unknown screens receive no
+    keys; only the existing exact launch-cwd folder dialog can be confirmed.
+    Uses stdlib, iac and model_guard; fleet wrappers consume its launch result,
+    which proves window creation, not task readiness. --self-check fakes all
+    captures, keys and window creation without launching a runtime.
 """
 
 from __future__ import annotations
@@ -233,22 +240,55 @@ def _startup_folder_matches(pane: str, cwd: str | None) -> bool:
 _IDLE_SCREENS = {
     "claude-code": (r"─{3,}", r"❯(?: (?P<text>.*))?", r"─{3,}", r"\? for shortcuts"),
     "codex-cli": (r"›(?: (?P<text>.*))?", r"\? for shortcuts"),
+    "codex-modern": (r"› (?P<text>.+)",
+                     r"GPT-\d+(?:\.\d+)*(?:-[A-Za-z0-9]+)* (?:low|medium|high|xhigh|max)(?: fast)? · (?:~|/).+ · .+",
+                     r"\? for shortcuts(?:\s+⚠ [1-9]\d* warnings? · f2 to view)?"),
 }
 
 
-def _startup_idle_matches(pane: str, prompt: str | None = None) -> bool:
-    lines = [line.strip() for line in pane.splitlines() if line.strip()]
-    for patterns in _IDLE_SCREENS.values():
+def _startup_activity(line: str) -> str | None:
+    match = re.fullmatch(r"(?:esc to interrupt|to interrupt|"
+                         r"(?P<label>[•✻✽✶✳✢*·]\s+[^()]+|Working|Compacting)\s*"
+                         r"\([^()]*\besc to interrupt\))", line.strip())
+    if match:
+        label = (match["label"] or "").lstrip("•✻✽✶✳✢*· ").strip()
+        return "compacting" if label.startswith("Compacting") else "working"
+    return None
+
+
+def _startup_state(pane: str, prompt: str | None = None) -> str:
+    """Classify the current bottom UI block, never activity words in history."""
+    lines = [line.lstrip() for line in pane.splitlines() if line.strip()]
+    if not lines:
+        return "unknown"
+    if activity := _startup_activity(lines[-1]):
+        return activity
+    for runtime, patterns in _IDLE_SCREENS.items():
         if len(lines) < len(patterns):
             continue
-        matches = [re.fullmatch(pattern, line)
+        matches = [re.fullmatch(pattern + r"\s*", line)
                    for pattern, line in zip(patterns, lines[-len(patterns):])]
         if all(matches):
+            above = lines[:-len(patterns)]
+            if above and above[-1].strip() == "└ Tip: Press ⌃t to open the full transcript.":
+                above = above[:-1]
+            if above and (activity := _startup_activity(above[-1])):
+                return activity
+            # Only a complete turn-ending marker separates prior transcript from idle.
+            if above and not re.fullmatch(r"Worked for \d+[hms](?: \d+[hms])*(?: • \d{1,2}:\d{2})?",
+                                          above[-1].strip()):
+                return "unknown"
             text = next(match.groupdict()["text"] for match in matches if "text" in match.groupdict())
-            # After our paste, only that exact pending prompt may be submitted.
-            if not text or text == prompt:
-                return True
-    return False
+            if prompt is not None and text == prompt:
+                return "pending"
+            if not text or (runtime == "codex-modern" and text == "Ask Codex to do anything"):
+                return "idle"
+            return "unknown"
+    return "unknown"
+
+
+def _startup_idle_matches(pane: str, prompt: str | None = None) -> bool:
+    return _startup_state(pane, prompt) in ("idle", "pending")
 
 
 def _submit_until_working(window: str, tries: int = 4, *,
@@ -259,7 +299,9 @@ def _submit_until_working(window: str, tries: int = 4, *,
     first Enter (still booting, or treating it as part of the paste), leaving
     the instruction sitting unsent in the input box. Never assume one Enter landed;
     verify the current status line, retrying a few times.
-    Optional boot text is typed once at a known idle composer, then recaptured before Enter.
+    Optional boot text is typed once at an empty idle composer, then only its
+    exact pending text can receive Enter after a separate successful capture.
+    Unknown screens get no keys; Compacting gets bounded recaptures.
     """
     import time
     folder_selected = False
@@ -280,6 +322,7 @@ def _submit_until_working(window: str, tries: int = 4, *,
                 time.sleep(1)
                 continue  # Unknown readiness must never result in a key press.
             folder_matches = _startup_folder_matches(pane, _LAUNCH_CWDS.get(window))
+            state = _startup_state(pane, pending_prompt)
             if not folder_matches:
                 folder_selected = False
             if folder_matches:
@@ -287,23 +330,22 @@ def _submit_until_working(window: str, tries: int = 4, *,
                 action = "Enter" if folder_selected else "Home"
                 subprocess.run(["tmux", "send-keys", "-t", window, action], timeout=10)
                 folder_selected = action == "Home"
-            elif re.fullmatch(r"(?:esc to interrupt|to interrupt|"
-                              r"(?:[•✻✽✶✳✢*·]\s+[^()]+|Working)\s*"
-                              r"\([^()]*\besc to interrupt\))",
-                              pane.rstrip().splitlines()[-1].strip()):
+            elif state == "working":
                 return True
-            elif not _startup_idle_matches(pane, pending_prompt):
-                subprocess.run(["tmux", "send-keys", "-t", window, "Escape"], timeout=10)
+            elif state == "compacting":
+                pass
+            elif state == "unknown" or (state == "idle" and boot_prompt is None and pending_prompt is not None):
                 tail = pane.rstrip().splitlines()[-3:]
                 print(f"WARNING: {window.rsplit(':', 1)[-1]}: unknown startup screen; "
                       f"hooks stay human-only; last 3 lines: {tail!r}", file=sys.stderr)
                 return False
             elif boot_prompt is not None:
-                if _startup_idle_matches(pane):
+                if state == "idle":
                     subprocess.run(["tmux", "send-keys", "-t", window, "-l", boot_prompt],
                                    check=True, timeout=10)
                 boot_prompt = None  # Recapture and recheck readiness before pressing Enter.
             elif not submitted:
+                # shortcut: capture and key delivery are separate; atomic readiness needs runtime support.
                 subprocess.run(["tmux", "send-keys", "-t", window, "Enter"], timeout=10)
                 submitted = True
             time.sleep(1)
@@ -357,34 +399,46 @@ def _self_check_startup_trust() -> None:
     assert not _startup_folder_matches(folder(cwd), None)
     assert not _startup_idle_matches("normal idle prompt")
 
-    def check(captures, expected_keys, expected_result, warning_count, entry="submit"):
-        index, keys = 0, []
+    def check(captures, expected_keys, expected_result, warning_count, entry="submit", launch_cwd=cwd):
+        index, keys, last_key_capture = 0, [], 0
+        fresh = False
         def run(args, **kwargs):
-            nonlocal index
+            nonlocal index, last_key_capture, fresh
+            assert args[:1] == ["tmux"], args
             if "capture-pane" in args:
                 capture = captures[min(index, len(captures) - 1)]
                 index += 1
+                fresh = False
                 if isinstance(capture, Exception):
                     raise capture
                 if isinstance(capture, subprocess.CompletedProcess):
+                    fresh = capture.returncode == 0 and bool(capture.stdout.strip())
                     return capture
+                fresh = bool(capture.strip())
                 return subprocess.CompletedProcess(args, 0, stdout=capture)
             if "send-keys" in args:
+                assert fresh and index > last_key_capture, (captures, args, index)
+                assert args[4:] in (["-l", "boot prompt"], ["Home"], ["Enter"]), args
+                last_key_capture = index
                 keys.append(args[-1])
+            else:
+                assert args[1:2] == ["new-window"], args
             return subprocess.CompletedProcess(args, 0)
-        with patch.dict(_LAUNCH_CWDS, {"fixture": cwd}), \
+        with patch.dict(_LAUNCH_CWDS, {"fixture": launch_cwd}, clear=True), \
                 patch.object(subprocess, "run", side_effect=run), patch("time.sleep"), \
                 contextlib.redirect_stderr(io.StringIO()) as warnings:
             if entry == "spawn":
-                assert spawn("tmux", "fixture", "cli 'boot prompt'")[0]
+                assert spawn("tmux", "fixture", "cli 'boot prompt'") == (True, "tmux window")
             elif entry == "resend":
-                assert _resend_boot_if_idle("fixture", "boot prompt", wait=16) == expected_result
+                result = _resend_boot_if_idle("fixture", "boot prompt", wait=16)
+                assert result == expected_result, (captures, result, expected_result)
             else:
-                assert _submit_until_working("fixture", tries=1) == expected_result
+                result = _submit_until_working("fixture", tries=1)
+                assert result == expected_result, (captures, result, expected_result)
         assert keys == expected_keys, (captures, keys)
         warning = warnings.getvalue()
         assert warning.count("WARNING:") == warning_count, warning
-        if "Escape" in expected_keys:
+        if "unknown startup screen" in warning:
             assert "fixture" in warning and "last 3 lines:" in warning, warning
             rejected_pane = captures[min(index, len(captures)) - 1]
             assert repr(rejected_pane.rstrip().splitlines()[-3:]) in warning, warning
@@ -395,25 +449,66 @@ def _self_check_startup_trust() -> None:
     failed = subprocess.CompletedProcess([], 1, stdout=codex)
     count_only = "5 hooks need review\nt trust all"
     working = "• Working (1s • esc to interrupt)"
+    compacting = "• Compacting (1s • esc to interrupt)"
+    # Recorded Codex 0.163 layout; transcript, directory and title use fixture text.
+    model = "  GPT-6.1-Sol max fast · ~/fixture · Arm mail watcher fi…\n"
+    footer = "  ? for shortcuts                                                                                     ⚠ 1 warning · f2 to view\n"
+    modern = "› Ask Codex to do anything\n\n" + model + footer
+    tip = "  └ Tip: Press ⌃t to open the full transcript.\n"
+    active = working + "\n" + tip + "\n" + modern
+    # Decisive regression first: activity above the composer must receive zero keys.
+    check([active], [], True, 0, "resend")
+    unsupported_tip = "└ Tip: Press Ctrl+t to open the full transcript.\n"
+    blocked_prefixes = (
+        working + "\n" + unsupported_tip, compacting + "\n" + unsupported_tip,
+        "• Working (1s • esc to interru\npt)\n", "5 hooks need review\nt trust all\nExit\n",
+        "Hooks need review\n5 hooks are new or changed.\n", "Hooks need review\n\nExit\n",
+        unsupported_tip,
+    )
+    check([blocked_prefixes[0] + modern], [], False, 1, "resend")
+    check([compacting.replace("• ", "•\t", 1)], [], False, 1, "resend")
     for entry in ("submit", "resend", "spawn"):
         for pane in rejected:
-            check([pane, working], ["Escape"], False, 1, entry)
+            check([pane, working], [], False, 1, entry)
         for unavailable in ("", " \n", timeout, OSError("capture failed"), failed):
             assert check([unavailable], [], False, 1, entry) == (
                 16 if entry == "submit" else 48 if entry == "spawn" else 64)
-            check([unavailable, count_only], ["Escape"], False, 1, entry)
+            check([unavailable, count_only], [], False, 1, entry)
         check(["", timeout, failed, working], [], True, 0, entry)
         check(["older transcript\n" + working + "\n  "], [], True, 0, entry)
-        for idle in (claude, codex):
-            pending = idle.replace("❯", "❯ boot prompt").replace("› ", "› boot prompt")
+        for idle in (claude, codex, modern, tip + modern, modern.replace(footer, "  ? for shortcuts\n")):
+            pending = (idle.replace("❯", "❯ boot prompt")
+                       .replace("Ask Codex to do anything", "boot prompt")
+                       .replace("› \n", "› boot prompt\n"))
             wrong_text = pending.replace("boot prompt", "unrecognized text")
-            check([wrong_text], ["Escape"], False, 1, entry)
+            for wrong in (wrong_text, pending.replace("boot prompt", "boot"),
+                          pending.replace("boot prompt", "boot prompt…"),
+                          pending.replace("boot prompt", "boot prompt "),
+                          pending.replace("boot prompt", "boot\nprompt")):
+                check([wrong], [], False, 1, entry)
             keys = ["Enter"] if entry == "submit" else ["boot prompt", "Enter"]
             check([idle] + ([] if entry == "submit" else [pending]) + [working],
                   keys, True, 0, entry)
-            check([idle, count_only], keys[:1] + ["Escape"], False, 1, entry)
+            check([idle, count_only], keys[:1], False, 1, entry)
+            check([working + "\n" + idle], [], True, 0, entry)
+            check([compacting + "\n" + idle, working], [], True, 0, entry)
+            completed = working + "\nCompleted reply\nWorked for 2s\n" + idle
+            check([completed] + ([] if entry == "submit" else [pending]) + [working],
+                  keys, True, 0, entry)
             if entry != "submit":
                 check([pending, pending, working], ["Enter"], True, 0, entry)
+                check([pending, working], [], True, 0, entry)
+                check([pending, count_only], [], False, 1, entry)
+                check([pending, failed], [], False, 1, entry)
+                for status in (working, active, compacting, compacting + "\n" + tip + modern):
+                    check([idle, status, working], ["boot prompt"], True, 0, entry)
+                for hooks in (count_only, listing + "\n" + modern):
+                    check([idle, hooks], ["boot prompt"], False, 1, entry)
+                check([idle, idle], ["boot prompt"], False, 1, entry)
+                check([idle, failed], ["boot prompt"], False, 1, entry)
+                stale_pending = subprocess.CompletedProcess([], 1, stdout=pending)
+                check([idle, stale_pending], ["boot prompt"], False, 1, entry)
+                check([idle, wrong_text], ["boot prompt"], False, 1, entry)
                 # A swallowed Enter is retried without retyping our boot text.
                 captures_per_try = 12 if entry == "spawn" else 16
                 check([idle] + [pending] * captures_per_try + [working],
@@ -422,10 +517,43 @@ def _self_check_startup_trust() -> None:
                       ["Home", "Enter", "boot prompt", "Enter"], True, 0, entry)
         for pane in (folder(cwd), f"Trust this folder?\n{cwd}\nRepository root:\n{cwd}\nTrust and continue"):
             check([pane, pane, working], ["Home", "Enter"], True, 0, entry)
-            check([pane, count_only], ["Home", "Escape"], False, 1, entry)
+            check([pane, count_only], ["Home"], False, 1, entry)
             check([pane, failed], ["Home"], False, 1, entry)
+            check([pane, subprocess.CompletedProcess([], 1, stdout=pane)], ["Home"], False, 1, entry)
+            check([pane, folder(cwd + "-other")], ["Home"], False, 1, entry)
+            check([pane, failed, pane, pane, working], ["Home", "Home", "Enter"], True, 0, entry)
+            check([pane], [], False, 1, entry, launch_cwd=None)
         check([codex] + [""] * 14 + [count_only],
-              (["Enter"] if entry == "submit" else ["boot prompt"]) + ["Escape"], False, 1, entry)
+              ["Enter"] if entry == "submit" else ["boot prompt"], False, 1, entry)
+        for status in (working, compacting):
+            for optional_tip in ("", tip):
+                for idle in (modern, modern.replace(footer, "  ? for shortcuts\n")):
+                    check([status + "\n" + optional_tip + idle, working], [], True, 0, entry)
+        check([working + "\n\n" + tip + "\n" + modern], [], True, 0, entry)
+        for idle in (codex, modern):
+            for prefix in blocked_prefixes:
+                check([prefix + idle], [], False, 1, entry)
+        assert check([compacting + "\n" + modern], [], False, 1, entry) == (
+            16 if entry == "submit" else 48 if entry == "spawn" else 64)
+        for spacing in ("\t", "\u00a0", " \t", "\u2003"):
+            spaced_working = working.replace("• ", "•" + spacing, 1)
+            spaced_compacting = compacting.replace("• ", "•" + spacing, 1)
+            for suffix in ("", "\n" + codex, "\n" + modern):
+                assert check([spaced_working + suffix], [], True, 0, entry) == 1
+                assert check([spaced_compacting + suffix], [], False, 1, entry) == (
+                    16 if entry == "submit" else 48 if entry == "spawn" else 64)
+                assert check([spaced_compacting + suffix, spaced_working + suffix], [], True, 0, entry) == 2
+            if entry != "submit":
+                assert check([modern, spaced_compacting + "\n" + modern, working],
+                             ["boot prompt"], True, 0, entry) == 3
+        for partial in ("› Ask Codex to do anything\n" + footer, "› Ask Codex to do anything\n" + model,
+                        modern.replace("GPT-6.1-Sol max fast", "unknown model"),
+                        modern.replace("? for shortcuts", "? for shortcut"),
+                        modern.replace("f2 to view", "f2 to vie"), listing + "\n" + modern,
+                        folder(cwd) + "\n" + modern,
+                        modern.replace("Ask Codex to do anything", ""),
+                        modern.replace("› Ask Codex to do anything", "›")):
+            check([partial], [], False, 1, entry)
 
 
 
