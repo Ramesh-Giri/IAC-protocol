@@ -3,6 +3,7 @@
 This procedure verifies actual host capabilities before a supervisor accepts a handoff.
 It grants no operating-system permissions and never overrides cloud, key or repository ownership boundaries.
 See [ONBOARDING.md](../ONBOARDING.md) for portable local settings and [OPERATIONAL_RULES.md](OPERATIONAL_RULES.md) for the fleet rules.
+Supervisors and launcher maintainers use it to verify host control, startup input guards and task handoff evidence.
 
 ## Permission profiles
 
@@ -65,12 +66,23 @@ Capture pane IDs at creation and verify the seat title before targeting them.
 Inspect an `agentmail-launch --terminal tmux` dry-run before any authorized `--apply`.
 Codex workers omit `--skip-permissions`; Claude-specific bypass arguments are not portable and require existing authorization and safeguards.
 Keep the supervisor's interactive profile separate from unattended workers.
-The launcher types or submits only on an allowlisted idle composer (or confirms an exact-cwd folder dialog); every other nonempty startup screen gets one Escape and one warning with the seat and last three lines, then stops.
+The launcher types or submits only on a complete recognized idle composer (or confirms an exact-cwd folder dialog).
+Working above the current composer and footer receives zero keys; Compacting receives zero keys and bounded recaptures.
+An unknown screen, including hook review or an unapproved folder, receives zero keys and one warning with the seat and last three lines, then stops.
+The current block above the composer must be absent, recognized activity, or the observed complete `Worked for` turn-ending marker; any other preceding UI remains unknown even with a familiar footer.
+The modern empty composer must show the exact observed placeholder; a bare modern glyph with metadata is unknown.
+Failed or empty captures receive zero keys and bounded recaptures; earlier readiness is never reused.
 Every key, including a literal boot-prompt resend, requires a successful nonempty capture and a fresh trust check.
+An empty composer receives the boot text once, and only the exact pending text can receive Enter after a separate successful capture and classification.
+Already pending boot text also requires a separate capture before Enter; mismatched, truncated or unexpectedly empty text stops submission.
 Folder trust is accepted only for the exact launch directory; hook trust remains a human action through /hooks.
 Changed-hook or new-folder trust is a human action; use a supported dismiss/continue-without-trusting path, or report the block.
 Never disable safeguards to clear a prompt.
 Submit boot/nudge text and Enter separately, then confirm Working and the task ACK.
+A fresh capture means a new successful capture call; text alone cannot establish a generation identity or detect replayed capture output.
+Capture and key delivery are separate operations, so a state change after the final capture and before delivery remains possible.
+Only runtime support for atomic readiness and input could close that interval; these guards grant no operating-system permissions.
+The launch result still reports window creation, and does not replace a unique task ACK plus actual Working as handoff proof.
 
 ## Handoff completion
 

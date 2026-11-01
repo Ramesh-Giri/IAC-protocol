@@ -1,0 +1,246 @@
+{
+ "nodes": [
+  {
+   "id": "agentmail/dashboard/netdash/__init__.py",
+   "purpose": "-*- coding: utf-8 -*-"
+  },
+  {
+   "id": "agentmail/dashboard/netdash/__main__.py",
+   "purpose": "-*- coding: utf-8 -*-"
+  },
+  {
+   "id": "agentmail/dashboard/netdash/cli.py",
+   "purpose": "-*- coding: utf-8 -*-"
+  },
+  {
+   "id": "agentmail/dashboard/netdash/glyphs.py",
+   "purpose": "-*- coding: utf-8 -*-"
+  },
+  {
+   "id": "agentmail/dashboard/netdash/identity.py",
+   "purpose": "-*- coding: utf-8 -*-"
+  },
+  {
+   "id": "agentmail/dashboard/netdash/model.py",
+   "purpose": "-*- coding: utf-8 -*-"
+  },
+  {
+   "id": "agentmail/dashboard/netdash/page.py",
+   "purpose": "-*- coding: utf-8 -*-"
+  },
+  {
+   "id": "agentmail/dashboard/netdash/panels.py",
+   "purpose": "-*- coding: utf-8 -*-"
+  },
+  {
+   "id": "agentmail/dashboard/netdash/paths.py",
+   "purpose": "-*- coding: utf-8 -*-"
+  },
+  {
+   "id": "agentmail/dashboard/netdash/probes.py",
+   "purpose": "-*- coding: utf-8 -*-"
+  },
+  {
+   "id": "agentmail/dashboard/netdash/state.py",
+   "purpose": "-*- coding: utf-8 -*-"
+  },
+  {
+   "id": "agentmail/dashboard/netdash/static/dashboard.js",
+   "purpose": null
+  },
+  {
+   "id": "agentmail/dashboard/netdash/thresholds.py",
+   "purpose": "-*- coding: utf-8 -*-"
+  },
+  {
+   "id": "agentmail/dashboard/netdash/util.py",
+   "purpose": "-*- coding: utf-8 -*-"
+  },
+  {
+   "id": "agentmail/dashboard/tests/test_model.py",
+   "purpose": "-*- coding: utf-8 -*-"
+  },
+  {
+   "id": "agentmail/dashboard/tests/test_state.py",
+   "purpose": "-*- coding: utf-8 -*-"
+  },
+  {
+   "id": "agentmail/diagram/build.py",
+   "purpose": "Build the static diagram page using only the five public browser assets."
+  },
+  {
+   "id": "agentmail/diagram/switch.js",
+   "purpose": null
+  },
+  {
+   "id": "agentmail/lib/iac.py",
+   "purpose": "IAC 1.1 primitives."
+  },
+  {
+   "id": "agentmail/lib/model_guard.py",
+   "purpose": "Filter ranked runtime/model candidates and append privacy-preserving decision logs."
+  },
+  {
+   "id": "agentmail/lib/test_model_guard.py",
+   "purpose": "Exercise deterministic model filtering with synthetic policy and task fixtures."
+  },
+  {
+   "id": "agentmail/tests/test_change_report.py",
+   "purpose": "change-report: facts come from a real throwaway git repo, so the parser is checked against git's own diff output, not a hand-written diff."
+  },
+  {
+   "id": "agentmail/tests/test_context_templates.py",
+   "purpose": "Contract checks for the optional agent-authored context assets."
+  },
+  {
+   "id": "agentmail/tests/test_diagram_page.py",
+   "purpose": "Static page asset/markup tests; these do not perform browser visual QA."
+  },
+  {
+   "id": "agentmail/tests/test_local_configuration.py",
+   "purpose": "Exercise portable fleet helpers with fake executables and isolated local policy."
+  },
+  {
+   "id": "agentmail/tests/test_project_map.py",
+   "purpose": "project-map: purposes come from header comments (tooling noise ignored), links resolve package and relative imports, undocumented files stay visible."
+  },
+  {
+   "id": "agentmail/tests/test_protocol.py",
+   "purpose": "Offline integration tests."
+  },
+  {
+   "id": "agentmail/tests/test_readme_diagrams.py",
+   "purpose": "Static checks for README disclosure markup, not Mermaid rendering tests."
+  },
+  {
+   "id": "agentmail/tests/test_team_setup.py",
+   "purpose": "Offline checks for team-onboarding assets and the fork's privacy boundary."
+  },
+  {
+   "id": "agentmail/tests/test_testlane.py",
+   "purpose": "Exercise testlane's CLI, command boundary and crash recovery using temporary repos."
+  },
+  {
+   "id": "agentmail/tests/test_websec.py",
+   "purpose": "Exercise websec CLI, recorded protocol/header fixtures and fetch boundaries."
+  }
+ ],
+ "edges": [
+  {
+   "from": "agentmail/dashboard/netdash/__main__.py",
+   "to": "agentmail/dashboard/netdash/cli.py"
+  },
+  {
+   "from": "agentmail/dashboard/netdash/cli.py",
+   "to": "agentmail/dashboard/netdash/model.py"
+  },
+  {
+   "from": "agentmail/dashboard/netdash/cli.py",
+   "to": "agentmail/dashboard/netdash/page.py"
+  },
+  {
+   "from": "agentmail/dashboard/netdash/cli.py",
+   "to": "agentmail/dashboard/netdash/paths.py"
+  },
+  {
+   "from": "agentmail/dashboard/netdash/cli.py",
+   "to": "agentmail/dashboard/netdash/probes.py"
+  },
+  {
+   "from": "agentmail/dashboard/netdash/cli.py",
+   "to": "agentmail/dashboard/netdash/util.py"
+  },
+  {
+   "from": "agentmail/dashboard/netdash/glyphs.py",
+   "to": "agentmail/dashboard/netdash/state.py"
+  },
+  {
+   "from": "agentmail/dashboard/netdash/glyphs.py",
+   "to": "agentmail/dashboard/netdash/util.py"
+  },
+  {
+   "from": "agentmail/dashboard/netdash/model.py",
+   "to": "agentmail/dashboard/netdash/identity.py"
+  },
+  {
+   "from": "agentmail/dashboard/netdash/model.py",
+   "to": "agentmail/dashboard/netdash/paths.py"
+  },
+  {
+   "from": "agentmail/dashboard/netdash/model.py",
+   "to": "agentmail/dashboard/netdash/probes.py"
+  },
+  {
+   "from": "agentmail/dashboard/netdash/model.py",
+   "to": "agentmail/dashboard/netdash/state.py"
+  },
+  {
+   "from": "agentmail/dashboard/netdash/model.py",
+   "to": "agentmail/dashboard/netdash/thresholds.py"
+  },
+  {
+   "from": "agentmail/dashboard/netdash/model.py",
+   "to": "agentmail/dashboard/netdash/util.py"
+  },
+  {
+   "from": "agentmail/dashboard/netdash/page.py",
+   "to": "agentmail/dashboard/netdash/__init__.py"
+  },
+  {
+   "from": "agentmail/dashboard/netdash/page.py",
+   "to": "agentmail/dashboard/netdash/paths.py"
+  },
+  {
+   "from": "agentmail/dashboard/netdash/page.py",
+   "to": "agentmail/dashboard/netdash/thresholds.py"
+  },
+  {
+   "from": "agentmail/dashboard/netdash/page.py",
+   "to": "agentmail/dashboard/netdash/util.py"
+  },
+  {
+   "from": "agentmail/dashboard/netdash/panels.py",
+   "to": "agentmail/dashboard/netdash/__init__.py"
+  },
+  {
+   "from": "agentmail/dashboard/netdash/panels.py",
+   "to": "agentmail/dashboard/netdash/glyphs.py"
+  },
+  {
+   "from": "agentmail/dashboard/netdash/panels.py",
+   "to": "agentmail/dashboard/netdash/paths.py"
+  },
+  {
+   "from": "agentmail/dashboard/netdash/panels.py",
+   "to": "agentmail/dashboard/netdash/state.py"
+  },
+  {
+   "from": "agentmail/dashboard/netdash/panels.py",
+   "to": "agentmail/dashboard/netdash/thresholds.py"
+  },
+  {
+   "from": "agentmail/dashboard/netdash/panels.py",
+   "to": "agentmail/dashboard/netdash/util.py"
+  },
+  {
+   "from": "agentmail/dashboard/netdash/probes.py",
+   "to": "agentmail/dashboard/netdash/thresholds.py"
+  },
+  {
+   "from": "agentmail/dashboard/netdash/probes.py",
+   "to": "agentmail/dashboard/netdash/util.py"
+  },
+  {
+   "from": "agentmail/dashboard/netdash/state.py",
+   "to": "agentmail/dashboard/netdash/thresholds.py"
+  },
+  {
+   "from": "agentmail/dashboard/netdash/state.py",
+   "to": "agentmail/dashboard/netdash/util.py"
+  },
+  {
+   "from": "agentmail/dashboard/netdash/util.py",
+   "to": "agentmail/dashboard/netdash/thresholds.py"
+  }
+ ]
+}
