@@ -34,6 +34,10 @@ DONE MEANS
 
 MAIL BUDGET
   ACK once, BLOCKER if stuck, DONE once. Five mails maximum (rule 47).
+
+SPEND
+  Pre-approved rerun budget and hard cap in explicit units (attempts, time or cost).
+  Anything over the cap is a fresh ask to the operator before it runs (rule 52).
 ```
 
 Why: the 31 Oct to 2 Nov 2026 run had briefs that said what to build and never what to leave alone, which is how side tracks opened while the priority track was red.

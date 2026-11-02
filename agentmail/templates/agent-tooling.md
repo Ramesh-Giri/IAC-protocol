@@ -74,6 +74,14 @@ gold-plating finished phases and never started the last one.) When you launch on
   `brew install --cask opensuperwhisper` (Apple Silicon, macOS ≥ 14; needs mic +
   accessibility permissions granted by the human).
 
+## gstack: choose by role and host
+
+[GSTACK.md](GSTACK.md) defines the inspected source revision, selective registration, host install commands, per-role skill matrix and the security limits of the safety skills.
+Adopt its investigation, gate-integrity, READY, flaky-ledger and SPEND practices through IAC rules 45, 47, 48 and 52.
+Use [FLAKY_LEDGER.md](FLAKY_LEDGER.md) for each project's rerun history.
+Enable only the skills the role needs, retain the site's existing design system, and follow its browser and cloud restrictions.
+The Aureus recommendation is deliberately narrower than the portable catalog: careful, freeze and investigate, with test-audit and modernize used once for a named task.
+
 ## Supporting AXI tools (dependencies of the above / of firstmate)
 `tasks-axi` (backlog), `quota-axi` (quota-aware dispatch data),
 `chrome-devtools-axi` (browser automation, optional): `npm install -g <name>` /
