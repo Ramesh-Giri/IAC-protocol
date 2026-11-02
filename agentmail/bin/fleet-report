@@ -1,0 +1,110 @@
+#!/usr/bin/env python3
+"""fleet-report - the run metrics a main agent must look at before it calls a run productive.
+
+Usage: fleet-report [--since HOURS] [--repo PATH ...] [-d MAIL_ROOT]
+
+Prints, for the window: seats launched (roster), mail in/out of the parent by type and the
+chattiest seats, pushed commits per repo, Codex tokens from ~/.codex/sessions, and the ratios
+that matter: tokens per pushed commit, mails per seat, hours since the last push.
+Read-only. Rule 52: run it at the end of every run and paste the ratios into the handoff.
+The 36 h run of 31 Oct 2026 would have shown 942 parent mails and 3.3 B tokens for 6 pushes
+while it was happening, not two days later.
+"""
+import argparse, collections, glob, json, os, re, subprocess, sys, time
+
+
+def find_mail_root(start):
+    d = os.path.abspath(start)
+    while True:
+        c = os.path.join(d, ".agent-mail")
+        if os.path.isdir(c):
+            return c
+        p = os.path.dirname(d)
+        if p == d:
+            return None
+        d = p
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--since", type=float, default=24, help="window in hours (default 24)")
+    ap.add_argument("--repo", action="append", default=[], help="git checkout to count pushed commits in (repeatable)")
+    ap.add_argument("-d", "--mail-root")
+    a = ap.parse_args()
+    root = a.mail_root or find_mail_root(os.getcwd())
+    if not root:
+        print("no .agent-mail found; pass -d", file=sys.stderr); return 2
+    t0 = time.time() - a.since * 3600
+    since_iso = time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(t0))
+
+    roster = json.load(open(os.path.join(root, "roster.json"))).get("agents", {})
+    parent = next((k for k, v in roster.items() if v.get("role") == "parent"), "overseer-ramesh")
+    launched = [k for k, v in roster.items()
+                if v.get("active_at") and time.mktime(time.strptime(v["active_at"][:19], "%Y-%m-%dT%H:%M:%S")) + time.timezone >= t0]
+    effort = collections.Counter(roster[k].get("effort") for k in launched)
+    models = collections.Counter(roster[k].get("model") for k in launched)
+
+    inbound = collections.Counter(); outbound = collections.Counter(); per_seat = collections.Counter(); total = 0
+    for p in glob.glob(os.path.join(root, "*", "cur", "*")) + glob.glob(os.path.join(root, "*", "new", "*")):
+        if os.path.getmtime(p) < t0:
+            continue
+        try:
+            h = open(p, errors="ignore").read(800)
+        except OSError:
+            continue
+        total += 1
+        frm = re.search(r'^from:\s*"?([^"\n]+)', h, re.M); to = re.search(r'^to:\s*"?([^"\n]+)', h, re.M)
+        typ = re.search(r'^type:\s*"?(\w+)', h, re.M); typ = typ.group(1) if typ else "?"
+        frm = frm.group(1) if frm else "?"; to = to.group(1) if to else "?"
+        if to == parent:
+            inbound[typ] += 1; per_seat[frm] += 1
+        if frm == parent:
+            outbound[typ] += 1
+
+    pushed = {}; last_push = None
+    for r in a.repo:
+        out = subprocess.run(["git", "-C", r, "log", "--remotes=origin", f"--since={since_iso}", "--format=%h %ct %s"],
+                             capture_output=True, text=True).stdout.strip().splitlines()
+        pushed[r] = out
+        for line in out:
+            ts = int(line.split()[1]); last_push = max(last_push or 0, ts)
+
+    tok = collections.Counter(); sessions = 0
+    for f in glob.glob(os.path.expanduser("~/.codex/sessions/**/*.jsonl"), recursive=True):
+        if os.path.getmtime(f) < t0:
+            continue
+        try:
+            with open(f, "rb") as h:
+                h.seek(max(0, os.path.getsize(f) - 200000)); tail = h.read().decode(errors="ignore").splitlines()
+        except OSError:
+            continue
+        for line in reversed(tail):
+            if '"total_token_usage"' in line:
+                try:
+                    u = json.loads(line)["payload"]["info"]["total_token_usage"]
+                except (ValueError, KeyError):
+                    continue
+                sessions += 1; tok["total"] += u.get("total_tokens", 0); tok["output"] += u.get("output_tokens", 0)
+                tok["cached"] += u.get("cached_input_tokens", 0); break
+
+    n_push = sum(len(v) for v in pushed.values())
+    print(f"window: last {a.since:g} h   parent: {parent}")
+    print(f"seats launched: {len(launched)}   effort {dict(effort)}   models {dict(models)}")
+    print(f"mail: {total} total; to parent {sum(inbound.values())} {dict(inbound.most_common(5))}; from parent {sum(outbound.values())} {dict(outbound.most_common(5))}")
+    print(f"chattiest seats -> parent: {per_seat.most_common(5)}")
+    for r, lines in pushed.items():
+        print(f"pushed in {r}: {len(lines)}")
+        for line in lines[:10]:
+            print("   " + line[:110])
+    print(f"codex sessions: {sessions}   tokens total {tok['total']/1e6:.0f}M  cached {tok['cached']/1e6:.0f}M  output {tok['output']/1e6:.1f}M")
+    print("ratios:")
+    print(f"   mails per launched seat: {(total / len(launched)):.0f}" if launched else "   mails per launched seat: n/a (no seat launched in window)")
+    print(f"   parent decision mails: {outbound.get('decision', 0)}   (rule 47 wants ~0; BLOCKER replies only)")
+    if a.repo:
+        print(f"   codex tokens per pushed commit: {(tok['total'] / n_push / 1e6):.0f}M" if n_push else "   pushed commits: 0 in window")
+        print(f"   hours since last push: {((time.time() - last_push) / 3600):.1f}" if last_push else "   hours since last push: no push in window")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
