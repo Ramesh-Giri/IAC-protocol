@@ -16,6 +16,7 @@ RECEIVES
 
 OUTPUTS
   Exact deliverables and where they land (worktree branch, attachments folder, one DONE mail).
+  Codex seats: the sandbox refuses every write under .git, even with the git directory added. Do not git add or commit; freeze the tree, say so in DONE, and the parent commits it unchanged. A BLOCKER for this is wasted mail.
 
 TRIGGERS
   What starts this seat (this mail) and what ends it (the DONE mail and process exit).
