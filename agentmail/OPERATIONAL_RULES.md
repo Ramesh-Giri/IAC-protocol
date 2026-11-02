@@ -401,6 +401,8 @@ A change under about fifty lines gets a single reviewer, or the overseer reads t
 Do not open author, normal, break, integrator and smoke seats for one small change.
 The council convenes for Layer-3 designs and genuine contract uncertainty only, never for test semantics or intake wording.
 Rule 43's independent break pass stays mandatory; this rule changes how many seats deliver it, not whether it happens.
+The reviewer names every weakened test, wider timeout, changed snapshot or added suppression to the human operator by name, with the reason and effect on the gate.
+An author or reviewer never silently weakens a gate to manufacture a green result.
 
 ## 46. Effort and headroom gates at launch
 
@@ -416,6 +418,11 @@ A worker sends the parent three kinds of mail: one ACK when it starts, a BLOCKER
 Progress notes go into the seat's own log file under its attachments folder, not into the parent's inbox.
 Five mails per seat per task is the ceiling; a seat that needs more is asking for permission it already has under rule 44.
 The parent answers BLOCKERs and reads DONEs; it does not run a decision loop (354 decision mails in 36 hours is the failure this rule names).
+Use three approval shapes when a BLOCKER or DONE carries a decision, preserving the operator's exact words rather than paraphrasing them into broader permission.
+Record: an Approvals table gives the date, what was asked, the operator's exact words, who relayed them, the covered scope and what remains pending; cite the rule and dated words for standing approval.
+Plan ask: a decision BLOCKER explains before and after, why it matters, what triggered it, the big decisions, and lettered options with their cost and a recommendation; give exact TYPE-THIS commands or a direct link and numbered steps when the operator must act.
+Merge ask: DONE explains what changed, captioned before/after images when relevant, why, blast radius, the Approvals table and source-bound evidence; the integrator uses that handoff for IAC's direct merge, without requiring a PR or gstack merge train.
+An informational BLOCKER names the missing input and next owner in the plan-ask shape without inventing an approval question, and a DONE without an outstanding decision is a record, not another permission loop.
 
 ## 48. Evidence before fixing CI, and fix the class
 
@@ -424,6 +431,13 @@ Run `agentmail/bin/ci-failed-log OWNER/REPO RUN_ID` first; it lists every job wi
 If retrieval fails, name the exact missing output and stop; do not push a guessed fix.
 Every push costs a full hosted run; three guess-pushes in one afternoon is the pattern this rule forbids.
 When the failure belongs to a class (for example tests with sub-100 ms real-clock budgets that race slow runners), one worker sweeps the class once instead of fixing one instance per push.
+Before any fix, write a root-cause hypothesis that names the responsible module and the evidence that would disprove it.
+A wider timeout or a skip is never a hypothesis.
+Lock edits to the module the hypothesis names; if evidence points elsewhere, revise the written hypothesis and stay within the task's ownership boundary before editing.
+After three failed fixes, stop and report the hypothesis, attempted fixes and results instead of trying a fourth.
+A case that fails twice is real; nothing is retried into green.
+Record every rerun event in the project's flaky ledger using [FLAKY_LEDGER.md](templates/FLAKY_LEDGER.md), including both runs even when the second passes.
+Schedule one flaky pass per day to fix the worst repeat, showing its failure red before green within the approved task and rerun budget.
 
 ## 49. The priority track is locked until it is green and handed over
 
@@ -445,10 +459,13 @@ After the last code output of a run, the main writes the handoff within the hour
 
 ## 52. Briefs name what they own and what they leave alone; runs are measured
 
-Every task mail follows `agentmail/templates/TASK_BRIEF.md`: OUTCOME, OWNS, RECEIVES, OUTPUTS, TRIGGERS, TOOLS, HUMAN CHECKPOINT, NOT THIS ROUND, DONE MEANS, MAIL BUDGET.
+Every task mail follows `agentmail/templates/TASK_BRIEF.md`: OUTCOME, OWNS, RECEIVES, OUTPUTS, TRIGGERS, TOOLS, HUMAN CHECKPOINT, NOT THIS ROUND, DONE MEANS, MAIL BUDGET, SPEND.
 A worker returns a brief that lacks a heading instead of guessing.
 NOT THIS ROUND is where the parent writes down the adjacent work the seat will see, so it is not rediscovered and opened as a side track (rule 49).
 DONE MEANS includes five manual cases for anything user-visible: cases the operator can run on the phone or in a browser in twenty minutes, written into the DONE mail.
+DONE MEANS also includes the full 40-character head SHA, every required check green at that head, and every flaky case already recorded in the project's flaky ledger.
+A missing, skipped, cancelled, stale or running required check is not READY evidence (rule 33).
+SPEND names the task's pre-approved rerun budget and a hard cap in explicit units; anything over the cap is a fresh ask to the operator before running it.
 At the end of every run, and at least every six hours of a long one, the main runs `agentmail/bin/fleet-report --repo <checkout>` and pastes its ratios into the handoff: mails per seat, parent decision mails, tokens per pushed commit, hours since the last push.
 A run whose ratios are drifting toward the 31 Oct 2026 numbers stops launching and reports before it spends more.
 
