@@ -393,4 +393,54 @@ If runtime limits prevent continued supervision or wake delivery, report the exa
 Completed units still close after verified evidence and process exit; this waiting rule does not retain finished seats for speculative future work.
 This rule does not waive mandatory independent review, safeguards, runtime restrictions, or the human-only cloud and deployment boundary.
 
+## 45. One author, one reviewer, sized to the change
+
+Audit of the 31 Oct to 2 Nov 2026 run: 49 seats, 36 of them reviewers, all at the top model and max effort, six pushes, nothing deployed, the whole weekly Codex allowance gone in two and a half days.
+A feature gets one author and one independent reviewer who runs the normal pass and the break pass in a single brief, on the other provider where possible.
+A change under about fifty lines gets a single reviewer, or the overseer reads the diff itself.
+Do not open author, normal, break, integrator and smoke seats for one small change.
+The council convenes for Layer-3 designs and genuine contract uncertainty only, never for test semantics or intake wording.
+Rule 43's independent break pass stays mandatory; this rule changes how many seats deliver it, not whether it happens.
+
+## 46. Effort and headroom gates at launch
+
+Routine code, fixes, tests, docs and reviews run at medium effort on a mid-tier model.
+A seat may carry effort max only when its roster entry has a `max_effort_reason` naming security-critical or design work; `agentmail-launch` refuses the launch otherwise.
+Before any child launch the overseer runs `agentmail/bin/fleet-usage`; it caches each provider's weekly percent left for two hours.
+`agentmail-launch --apply` refuses a child whose provider shows under twenty percent weekly headroom or whose reading is stale, unless `--override-headroom` carries the operator's literal word.
+The gate is a stop to ask, not a licence to spend: when one provider is drained, route to the other or wait for the reset, and say so to the operator.
+
+## 47. Worker mail budget
+
+A worker sends the parent three kinds of mail: one ACK when it starts, a BLOCKER when it genuinely cannot proceed, and one DONE with evidence when it finishes.
+Progress notes go into the seat's own log file under its attachments folder, not into the parent's inbox.
+Five mails per seat per task is the ceiling; a seat that needs more is asking for permission it already has under rule 44.
+The parent answers BLOCKERs and reads DONEs; it does not run a decision loop (354 decision mails in 36 hours is the failure this rule names).
+
+## 48. Evidence before fixing CI, and fix the class
+
+No CI-fix brief launches without the failing job's actual output attached.
+Run `agentmail/bin/ci-failed-log OWNER/REPO RUN_ID` first; it lists every job with `filter=all` (the default view hides failures), downloads each failed job's log with plain curl and prints the `not ok` and error lines.
+If retrieval fails, name the exact missing output and stop; do not push a guessed fix.
+Every push costs a full hosted run; three guess-pushes in one afternoon is the pattern this rule forbids.
+When the failure belongs to a class (for example tests with sub-100 ms real-clock budgets that race slow runners), one worker sweeps the class once instead of fixing one instance per push.
+
+## 49. The priority track is locked until it is green and handed over
+
+While the operator's priority outcome has red hosted CI or an undeployed qualified build, no new track opens: no new feature candidates, no side infrastructure work, no exploratory inventories.
+"Find new work for overnight" is an instruction for after the priority track is green and its TYPE-THIS deployment packet is in the operator's hands, not instead of it.
+Finish, hand over, then branch out.
+
+## 50. Raw receipts live outside the repository
+
+The repository takes one change report and one `evidence.json` per feature, written once when the feature is stable (rules 27 and 44).
+Per-step receipts, seals, parent checks, red and green logs and tarballs stay in the seat's attachments folder, never under `docs/changes/`.
+A change report is prose a reviewer can read, not a digest ledger.
+
+## 51. Main-agent context hygiene
+
+The main agent relaunches with a fresh context every six hours of continuous work or at about 200k tokens of context, whichever comes first, after writing the handoff files.
+Handoff and context files are readable prose with spaces and full sentences; compressed token-salad is not a handoff.
+After the last code output of a run, the main writes the handoff within the hour and stops; it does not spend the night polishing status.
+
 Revision: public rules generalized; original site-specific rules are preserved in the ignored local overlay.

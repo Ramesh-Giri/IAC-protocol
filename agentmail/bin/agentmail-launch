@@ -723,6 +723,46 @@ def detect_terminal() -> str:
     return "terminal"
 
 
+HEADROOM_CACHE = os.path.expanduser("~/.cache/iac/fleet-usage.json")   # written by fleet-usage
+HEADROOM_MIN_PCT = 20
+HEADROOM_MAX_AGE_S = 2 * 3600
+
+
+def _launch_gate_problems(chosen, override: str) -> list:
+    """Rule 46. Returns human-readable refusals; empty list means launch may proceed.
+
+    - effort "max" needs roster field max_effort_reason (security or design work only);
+    - every child launch needs a fleet-usage reading under 2 h old showing >= 20 % weekly
+      headroom on that seat's provider, unless --override-headroom carries the operator's word.
+    """
+    problems = []
+    for seat in chosen:
+        if seat.get("effort") == "max" and not seat.get("max_effort_reason"):
+            problems.append(f"{seat['id']}: effort max without roster max_effort_reason "
+                            f"(routine work runs at medium; see OPERATIONAL_RULES.md rule 46)")
+    children = [s for s in chosen if s.get("role") != "parent"]
+    if not children or override:
+        return problems
+    try:
+        with open(HEADROOM_CACHE, encoding="utf-8") as fh:
+            cache = json.load(fh)
+        age = __import__("time").time() - float(cache.get("checked_at", 0))
+    except (OSError, ValueError):
+        cache, age = {}, None
+    if age is None or age > HEADROOM_MAX_AGE_S:
+        problems.append("no fleet-usage reading under 2 h old; run agentmail/bin/fleet-usage first "
+                        "(or --override-headroom '<operator word>')")
+        return problems
+    left = cache.get("weekly_pct_left") or {}
+    for seat in children:
+        provider = "codex" if str(seat.get("runtime", "")).startswith("codex") else "claude"
+        pct = left.get(provider)
+        if pct is None or pct < HEADROOM_MIN_PCT:
+            problems.append(f"{seat['id']}: {provider} weekly headroom is {pct}% (< {HEADROOM_MIN_PCT}%); "
+                            f"route to the other provider or pass --override-headroom with the operator's word")
+    return problems
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
         prog="agentmail-launch",
@@ -738,6 +778,9 @@ def main(argv=None) -> int:
     ap.add_argument("--skip-permissions", action="store_true",
                     help="run CHILD seats with --dangerously-skip-permissions (never the overseer)")
     ap.add_argument("--apply", action="store_true", help="actually launch (otherwise: print the plan)")
+    ap.add_argument("--override-headroom", metavar="OPERATOR_WORD", default="",
+                    help="launch although the provider's weekly headroom is under 20%% or the "
+                         "fleet-usage cache is stale; value is the operator's literal instruction (rule 46)")
     ap.add_argument("--self-check", action="store_true", help="check startup trust matching offline; launch nothing")
     args = ap.parse_args(argv)
 
@@ -836,6 +879,13 @@ def main(argv=None) -> int:
         if not args.apply:
             print("dry run — nothing was launched. Re-run with --apply.")
         return 0
+
+    # Rule 46 gates: max effort needs a written reason; a drained provider needs the operator's word.
+    problems = _launch_gate_problems(chosen, args.override_headroom)
+    if problems:
+        for line in problems:
+            print(f"  REFUSED: {line}", file=sys.stderr)
+        return 3
 
     ok = 0
     for seat in sorted(chosen, key=lambda s: (s.get("role") != "parent", s["id"])):

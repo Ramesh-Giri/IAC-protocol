@@ -12,7 +12,20 @@ throwaway session in a detached tmux window, scrape it, and kill it.
 Reads only. Costs ~nothing: /usage and /status are UI commands, not model calls.
 """
 from __future__ import annotations
-import argparse, os, re, shutil, subprocess, sys, time, uuid
+import argparse, json, os, re, shutil, subprocess, sys, time, uuid
+
+CACHE = os.path.expanduser("~/.cache/iac/fleet-usage.json")  # read by agentmail-launch headroom gate (rule 46)
+
+
+def _pct_left(rows, provider):
+    """Weekly percent left, or None when the pane did not render."""
+    text = "\n".join(rows)
+    if provider == "codex":
+        m = re.search(r"Weekly limit:.*?(\d+)%\s*left", text)
+        return int(m.group(1)) if m else None
+    m = re.search(r"Current week \(all models\)\s*\n?.*?(\d+)%\s*used", text, re.S)
+    return 100 - int(m.group(1)) if m else None
+
 
 def tmux(*a, **kw):
     return subprocess.run(["tmux", *a], capture_output=True, text=True, **kw)
@@ -53,6 +66,7 @@ def main() -> int:
     if tmux("has-session", "-t", args.session).returncode != 0:
         tmux("new-session", "-d", "-s", args.session, "-n", "keep")
 
+    left = {}
     print("=== CLAUDE ===")
     claude = shutil.which("claude")
     if not claude:
@@ -63,6 +77,7 @@ def main() -> int:
                 if re.search(r"\d+%\s*used|Resets|weekly limit|Current (week|session)", l)]
         print("\n".join("  " + r for r in rows) if rows
               else "  could not read /usage (pane did not render in time)")
+        left["claude"] = _pct_left(rows, "claude")
 
     print("\n=== CODEX ===")
     codex = shutil.which("codex")
@@ -74,7 +89,12 @@ def main() -> int:
                 if re.search(r"limit:|Account:|Model:", l)]
         print("\n".join("  " + r for r in rows) if rows
               else "  could not read /status (pane did not render in time)")
+        left["codex"] = _pct_left(rows, "codex")
 
+    os.makedirs(os.path.dirname(CACHE), exist_ok=True)
+    with open(CACHE, "w", encoding="utf-8") as fh:
+        json.dump({"checked_at": time.time(), "weekly_pct_left": left}, fh)
+    print(f"\nweekly % left: {left}   (cached for agentmail-launch at {CACHE})")
     print("\nSpend the one with headroom. Claude and Codex are SEPARATE budgets;")
     print("burning one while the other idles is the waste this tool exists to stop.")
     return 0
