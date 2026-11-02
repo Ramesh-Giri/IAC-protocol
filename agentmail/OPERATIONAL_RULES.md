@@ -443,4 +443,13 @@ The main agent relaunches with a fresh context every six hours of continuous wor
 Handoff and context files are readable prose with spaces and full sentences; compressed token-salad is not a handoff.
 After the last code output of a run, the main writes the handoff within the hour and stops; it does not spend the night polishing status.
 
+## 52. Briefs name what they own and what they leave alone; runs are measured
+
+Every task mail follows `agentmail/templates/TASK_BRIEF.md`: OUTCOME, OWNS, RECEIVES, OUTPUTS, TRIGGERS, TOOLS, HUMAN CHECKPOINT, NOT THIS ROUND, DONE MEANS, MAIL BUDGET.
+A worker returns a brief that lacks a heading instead of guessing.
+NOT THIS ROUND is where the parent writes down the adjacent work the seat will see, so it is not rediscovered and opened as a side track (rule 49).
+DONE MEANS includes five manual cases for anything user-visible: cases the operator can run on the phone or in a browser in twenty minutes, written into the DONE mail.
+At the end of every run, and at least every six hours of a long one, the main runs `agentmail/bin/fleet-report --repo <checkout>` and pastes its ratios into the handoff: mails per seat, parent decision mails, tokens per pushed commit, hours since the last push.
+A run whose ratios are drifting toward the 31 Oct 2026 numbers stops launching and reports before it spends more.
+
 Revision: public rules generalized; original site-specific rules are preserved in the ignored local overlay.
