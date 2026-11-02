@@ -1,0 +1,73 @@
+#!/usr/bin/env python3
+"""ci-failed-log - fetch the failing jobs' logs of a GitHub Actions run and print the failures.
+
+Usage: ci-failed-log OWNER/REPO RUN_ID [--out DIR]
+
+Why this exists: `gh run view --log-failed` and `gh api .../logs` time out on multi-megabyte
+logs, and on 2026-11-01 four diagnosis seats and three guess-pushes went by without anyone
+reading the actual failing assertion. Plain curl following the redirect fetched the same
+8 MB log in 13 s. Rule 48: no CI-fix brief launches without this output attached.
+
+Read-only: lists jobs with filter=all (the default 3-job view hides failures), downloads each
+failed job's log with the gh token, saves it, and prints `not ok` / error lines with their
+`location:` and `error:` context.
+"""
+import argparse, json, os, re, subprocess, sys
+
+API = "https://api.github.com"
+
+
+def sh(*cmd, timeout=300):
+    return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("repo", help="OWNER/REPO")
+    ap.add_argument("run_id")
+    ap.add_argument("--out", default=os.path.join(os.getcwd(), ".agent-mail", "attachments", "ci-logs"))
+    ap.add_argument("--context", type=int, default=25, help="lines of context after each failure")
+    a = ap.parse_args()
+    token = sh("gh", "auth", "token").stdout.strip()
+    if not token:
+        print("gh is not logged in", file=sys.stderr); return 2
+    jobs = sh("gh", "api", f"repos/{a.repo}/actions/runs/{a.run_id}/jobs?filter=all&per_page=100")
+    if jobs.returncode:
+        print(jobs.stderr, file=sys.stderr); return 2
+    jobs = json.loads(jobs.stdout).get("jobs", [])
+    print(f"run {a.run_id}: {len(jobs)} jobs")
+    for j in jobs:
+        print(f"  {j['id']}  {j['conclusion'] or j['status']:<10} {j['name']}")
+    failed = [j for j in jobs if j.get("conclusion") == "failure"]
+    if not failed:
+        print("no failed job in this run (cancelled/skipped is not green either, see rule 33)"); return 0
+    os.makedirs(a.out, exist_ok=True)
+    for j in failed:
+        path = os.path.join(a.out, f"run{a.run_id}-job{j['id']}.log")
+        r = sh("curl", "-sS", "-L", "--max-time", "280", "-o", path,
+               "-H", f"Authorization: Bearer {token}", "-H", "Accept: application/vnd.github+json",
+               f"{API}/repos/{a.repo}/actions/jobs/{j['id']}/logs")
+        if r.returncode or not os.path.exists(path):
+            print(f"\n== {j['name']}: log fetch failed: {r.stderr.strip()}"); continue
+        lines = open(path, errors="ignore").read().splitlines()
+        print(f"\n== {j['name']} (job {j['id']}): {len(lines)} lines saved to {path}")
+        steps = [s for s in j.get("steps", []) if s.get("conclusion") == "failure"]
+        for s in steps:
+            print(f"   failed step {s['number']}: {s['name']}")
+        pat = re.compile(r"\bnot ok\b|##\[error\]|^\S+ (FAIL|✖|Error:)|# fail [1-9]|Tests:.*failed")
+        shown = 0
+        for i, line in enumerate(lines):
+            body = line.split(" ", 1)[-1]
+            if pat.search(body):
+                shown += 1
+                print("\n" + "\n".join(l.split(" ", 1)[-1][:300] for l in lines[i:i + a.context]))
+                if shown >= 10:
+                    print("... more failures in the saved log"); break
+        if not shown:
+            print("   no failure marker matched; read the saved log tail:")
+            print("\n".join(l.split(" ", 1)[-1][:300] for l in lines[-40:]))
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
