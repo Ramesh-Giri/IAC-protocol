@@ -469,4 +469,13 @@ SPEND names the task's pre-approved rerun budget and a hard cap in explicit unit
 At the end of every run, and at least every six hours of a long one, the main runs `agentmail/bin/fleet-report --repo <checkout>` and pastes its ratios into the handoff: mails per seat, parent decision mails, tokens per pushed commit, hours since the last push.
 A run whose ratios are drifting toward the 31 Oct 2026 numbers stops launching and reports before it spends more.
 
+## 53. Loading, empty and error states are deliverables
+
+Every task that touches a screen delivers its loading, empty and error states with the happy path, and the reviewer checks them.
+A failure state keeps the page chrome the product uses everywhere (for Skyzai: the bottom bar with Back and the page title), shows an icon and one human sentence about what failed, offers a primary Retry, and shows partial data when only part of the load failed.
+Technical identifiers (keys, ids, codes) may appear as a copyable detail below the message, never as the headline, and never as the only content.
+A blank page, a raw exception string, or an identifier with a Retry chip is a defect, not an error state.
+When the operator reports a broken screen, the state design is fixed in the same round as the root cause, design first.
+Origin: 2026-11-03, the other-user profile failure screen on Skyzai ("is that how you show an error screen? fix that first, then find out why").
+
 Revision: public rules generalized; original site-specific rules are preserved in the ignored local overlay.
