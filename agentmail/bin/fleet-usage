@@ -79,17 +79,21 @@ def main() -> int:
               else "  could not read /usage (pane did not render in time)")
         left["claude"] = _pct_left(rows, "claude")
 
-    print("\n=== CODEX ===")
     codex = shutil.which("codex")
-    if not codex:
-        print("  codex not installed")
-    else:
-        out = probe(args.session, codex, "/status", 22, 12)
+    homes = [h for h in [os.path.expanduser("~/.codex"), os.path.expanduser("~/.codex-ramesh")]
+             if os.path.isfile(os.path.join(h, "auth.json"))]
+    for home in homes:
+        label = "CODEX" if home.endswith("/.codex") else "CODEX (" + os.path.basename(home) + ")"
+        print(f"\n=== {label} ===")
+        if not codex:
+            print("  codex not installed"); continue
+        out = probe(args.session, f"CODEX_HOME={home} {codex}", "/status", 22, 12)
         rows = [l.strip(" │") for l in out.splitlines()
                 if re.search(r"limit:|Account:|Model:", l)]
         print("\n".join("  " + r for r in rows) if rows
               else "  could not read /status (pane did not render in time)")
-        left["codex"] = _pct_left(rows, "codex")
+        key = "codex" if home.endswith("/.codex") else "codex-" + os.path.basename(home).replace(".codex-", "")
+        left[key] = _pct_left(rows, "codex")
 
     os.makedirs(os.path.dirname(CACHE), exist_ok=True)
     with open(CACHE, "w", encoding="utf-8") as fh:
