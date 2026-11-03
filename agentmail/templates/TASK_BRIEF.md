@@ -33,6 +33,7 @@ NOT THIS ROUND
 DONE MEANS
   The evidence the DONE mail must contain: test names and counts, SHAs, the five manual cases if user-visible.
   For any screen: the loading, empty and error states are delivered and tested with the happy path (rule 53); page chrome kept, human sentence, Retry, partial data over a dead page.
+  Every platform the product ships on is covered (for Skyzai: Android app and web); DONE names which changes are shared, native-only or web-only, and any platform gap is a numbered item, never silent.
 
 MAIL BUDGET
   ACK once, BLOCKER if stuck, DONE once. Five mails maximum (rule 47).
