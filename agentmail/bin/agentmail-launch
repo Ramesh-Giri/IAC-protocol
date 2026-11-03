@@ -632,6 +632,13 @@ def build_command(seat: dict, mail_root: str) -> str:
             parts += ["-c", "sandbox_workspace_write.network_access=true"]
         if seat.get("model"):
             parts += ["--model", seat["model"]]
+        # A roster seat may run on a second Codex account: codex_home names its CODEX_HOME
+        # directory (own auth.json and config.toml). Rule 46: spread seats across accounts.
+        if seat.get("codex_home"):
+            home_dir = os.path.expanduser(seat["codex_home"])
+            if not os.path.isfile(os.path.join(home_dir, "auth.json")):
+                raise ValueError(f"{sid}: codex_home {home_dir} has no auth.json; log that account in first")
+            parts = ["env", f"CODEX_HOME={home_dir}", *parts]
         # Codex has no persistent Monitor tool, so "arm your watcher" made it reach
         # for a terminal window. Tell it how mail works for it instead.
         parts.append(prompt if parent else prompt + (

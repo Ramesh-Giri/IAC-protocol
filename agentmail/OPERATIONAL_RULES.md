@@ -411,6 +411,7 @@ A seat may carry effort max only when its roster entry has a `max_effort_reason`
 Before any child launch the overseer runs `agentmail/bin/fleet-usage`; it caches each provider's weekly percent left for two hours.
 `agentmail-launch --apply` refuses a child whose provider shows under twenty percent weekly headroom or whose reading is stale, unless `--override-headroom` carries the operator's literal word.
 The gate is a stop to ask, not a licence to spend: when one provider is drained, route to the other or wait for the reset, and say so to the operator.
+Where the operator holds more than one account on a provider (roster field `codex_home` names a second Codex home with its own login), the overseer spreads seats across them: primary account for authors and integrators, second account for reviews, council and overflow; the strongest provider the operator wants kept in reserve (Claude on this site) runs the main agent only.
 
 ## 47. Worker mail budget
 
