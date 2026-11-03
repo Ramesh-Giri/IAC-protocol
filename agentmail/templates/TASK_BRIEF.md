@@ -33,6 +33,7 @@ NOT THIS ROUND
 DONE MEANS
   The evidence the DONE mail must contain: test names and counts, SHAs, the five manual cases if user-visible.
   For any screen: the loading, empty and error states are delivered and tested with the happy path (rule 53); page chrome kept, human sentence, Retry, partial data over a dead page.
+  FAILURE-MODE TABLE (required for any code that touches network, storage or auth): one row each for 'one dependency down on a fast network', 'slow link (3 s round trip, VPN)', 'backend unavailable on cold start', 'unauthenticated or hostile caller'; each row names the test that proves it. A fake-only test that never models latency or a dead peer does not count.
   Every platform the product ships on is covered (for Skyzai: Android app and web); DONE names which changes are shared, native-only or web-only, and any platform gap is a numbered item, never silent.
 
 MAIL BUDGET
