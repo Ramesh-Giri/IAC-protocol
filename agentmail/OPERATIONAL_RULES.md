@@ -204,6 +204,7 @@ Read enough context to verify a conclusion, and keep large artifacts out of repe
 For device or visual testing, record the current screen, navigation path, candidate version and observed result in the project's private test record.
 Distinguish a proposed test, a local check and observed behavior on the intended target.
 Do not call stale screenshots or cached binaries evidence for a new candidate.
+Every page a device-driving agent visits gets more than a map entry: look for UI inconsistencies, raw errors, broken states and overlaps, then fix them in scope or list them with a screenshot (Ramesh, 2026-11-05).
 
 ## 26. Triage review findings before closing branches
 
