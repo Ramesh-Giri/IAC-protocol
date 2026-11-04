@@ -740,7 +740,7 @@ def _launch_gate_problems(chosen, override: str) -> list:
 
     - effort "max" needs roster field max_effort_reason (security or design work only);
     - every child launch needs a fleet-usage reading under 2 h old showing >= 20 % weekly
-      headroom on that seat's provider, unless --override-headroom carries the operator's word.
+      headroom on that seat's account, unless --override-headroom carries the operator's word.
     """
     problems = []
     for seat in chosen:
@@ -763,9 +763,14 @@ def _launch_gate_problems(chosen, override: str) -> list:
     left = cache.get("weekly_pct_left") or {}
     for seat in children:
         provider = "codex" if str(seat.get("runtime", "")).startswith("codex") else "claude"
-        pct = left.get(provider)
+        account = provider
+        if provider == "codex" and seat.get("codex_home"):
+            home = os.path.normpath(os.path.expanduser(seat["codex_home"]))
+            # Match fleet-usage's per-home cache labels, including the default login.
+            account = "codex" if os.path.basename(home) == ".codex" else "codex-" + os.path.basename(home).replace(".codex-", "")
+        pct = left.get(account)
         if pct is None or pct < HEADROOM_MIN_PCT:
-            problems.append(f"{seat['id']}: {provider} weekly headroom is {pct}% (< {HEADROOM_MIN_PCT}%); "
+            problems.append(f"{seat['id']}: {account} weekly headroom is {pct}% (< {HEADROOM_MIN_PCT}%); "
                             f"route to the other provider or pass --override-headroom with the operator's word")
     return problems
 
