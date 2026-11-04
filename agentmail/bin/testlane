@@ -683,7 +683,7 @@ def client(args):
            "argv": argv, "cwd": cwd, "timeout": args.timeout, "attempt": 0}
     validate_job(job, job_id)
     write_json(queue / "jobs" / f"{job_id}.json", job, replace=True)
-    print(f"queued: {job_id}", file=sys.stderr, flush=True)
+    print(f"queued: {job_id}", flush=True)
     until = time.monotonic() + args.wait_timeout
     result = queue / "results" / f"{job_id}.json"
     while not result.exists():
@@ -734,6 +734,18 @@ class Parser(argparse.ArgumentParser):
         raise Error(message + "; " + self.format_usage().strip())
 
 
+def submission_error(exc):
+    """Keep submission failures visible even if one output stream has closed."""
+    for stream in (sys.stderr, sys.stdout):
+        try:
+            print(f"Error: {exc}", file=stream, flush=True)
+        except OSError:
+            # Avoid a second buffered-write failure during interpreter shutdown.
+            with open(os.devnull, "w") as sink:
+                os.dup2(sink.fileno(), stream.fileno())
+    return 2
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     if argv in (["-v"], ["-V"], ["--version"]):
@@ -773,12 +785,20 @@ def main(argv=None):
             raise Error("--wait-timeout must be positive and finite")
         if not math.isfinite(args.timeout) or not 0 < args.timeout <= MAX_TIMEOUT:
             raise Error(f"--timeout must be between 0 and {MAX_TIMEOUT} seconds")
-        return client(args)
+        code = client(args)
+        sys.stdout.flush()
+        return code
     except (Error, OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
+        if argv[:1] == ["run"]:
+            return submission_error(exc)
         print(f"error: {json.dumps(str(exc))}")
         if isinstance(exc, Error) and "usage:" in str(exc) and argv[:1] and argv[0] in sub.choices:
             print(sub.choices[argv[0]].format_help())
         return 2
+    except Exception as exc:
+        if argv[:1] != ["run"]:
+            raise
+        return submission_error(exc)
 
 
 if __name__ == "__main__":
