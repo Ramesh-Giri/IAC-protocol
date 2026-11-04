@@ -410,6 +410,7 @@ Routine code, fixes, tests, docs and reviews run at medium effort on a mid-tier 
 A seat may carry effort max only when its roster entry has a `max_effort_reason` naming security-critical or design work; `agentmail-launch` refuses the launch otherwise.
 Before any child launch the overseer runs `agentmail/bin/fleet-usage`; it caches each provider's weekly percent left for two hours.
 `agentmail-launch --apply` refuses a child whose provider shows under twenty percent weekly headroom or whose reading is stale, unless `--override-headroom` carries the operator's literal word.
+For Codex seats, the headroom gate checks the account named by `codex_home` (default: `~/.codex`) and names that account in any refusal.
 The gate is a stop to ask, not a licence to spend: when one provider is drained, route to the other or wait for the reset, and say so to the operator.
 Where the operator holds more than one account on a provider (roster field `codex_home` names a second Codex home with its own login), the overseer spreads seats across them: primary account for authors and integrators, second account for reviews, council and overflow; the strongest provider the operator wants kept in reserve (Claude on this site) runs the main agent only.
 
