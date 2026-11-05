@@ -206,6 +206,8 @@ Distinguish a proposed test, a local check and observed behavior on the intended
 Do not call stale screenshots or cached binaries evidence for a new candidate.
 Every page a device-driving agent visits gets more than a map entry: look for UI inconsistencies, raw errors, broken states and overlaps, then fix them in scope or list them with a screenshot (Ramesh, 2026-11-05).
 
+Status reporting for every test on every screen or feature (Ramesh, 2026-11-05): the seat reports what the screen actually shows: data shown, empty, loading stuck, or error with its exact text, plus the route and platform (Android or web) and a screenshot. Each bug goes to the overseer at once as FAILURES and a separate seat fixes it while testing continues. Testing does not stop for a fix, and every screen and feature is covered on both Android and web. A green unit test is not a status report.
+
 ## 26. Triage review findings before closing branches
 
 For every finding, record the affected behavior, current source evidence, owner, disposition and verification needed.
