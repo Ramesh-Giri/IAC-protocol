@@ -485,6 +485,13 @@ Origin: 2026-11-03, the other-user profile failure screen on app ("is that how y
 
 Revision: public rules generalized; original site-specific rules are preserved in the ignored local overlay.
 
-## 54. Shortest remaining time next (SRTN) for all scheduling
+## 54. Scheduling: multi-level feedback queue with a reserved short lane
 
-Ramesh, 2026-11-06: "use SRTN - shortest remaining time next - for all the tasks". Whenever work competes for the same resource (test lanes, the phone, seats, builds, merges, deploy order, review turns), run the item with the shortest estimated remaining time first, and re-decide whenever a new item arrives or one finishes. A small hotfix never waits behind a full suite: run its focused tests directly (or jump the lane queue), merge it first, ship it first. Long jobs (full suites, whole-range data entry, research) yield to short ones that unblock the human. State the remaining-time estimate when queuing or briefing; re-estimate on every progress report.
+Ramesh, 2026-11-06 (replaces "SRTN for all tasks" from the same day after weighing FIFO, round robin and SRTN): FIFO convoys (one 55-minute suite blocks every 2-minute check), round robin needs cheap preemption we do not have (suites and phone tasks restart from zero), SRTN needs reliable estimates and starves long jobs. Use a multi-level feedback queue for every shared resource (test lanes, the phone, seats, builds, merges, deploys, review turns):
+- Level 0, blocking: hotfixes, anything blocking Ramesh, a deploy, or the suite gating a release. Always first.
+- Level 1, short: focused checks and small tasks, about 15 minutes or less.
+- Level 2, long: full suites, bulk data entry, research, large refactors.
+- A job that runs longer than its level allows drops one level; a job waiting more than 30 minutes moves up one level (aging, no starvation). Within a level, first come first served.
+- Test lanes: one of the two lanes is reserved for levels 0-1 only, so a full suite can never block a quick fix. Focused validation (up to about 12 files) may run directly in the seat's own tree when both lanes are busy.
+- The phone: same levels; one phone task holds the device at most about an hour, long data entry is cut into chunks so a short check can run between them.
+- State the level and a time estimate when queuing or briefing; re-rank when an estimate proves wrong.
