@@ -493,5 +493,6 @@ Ramesh, 2026-11-06 (replaces "SRTN for all tasks" from the same day after weighi
 - Level 2, long: full suites, bulk data entry, research, large refactors.
 - A job that runs longer than its level allows drops one level; a job waiting more than 30 minutes moves up one level (aging, no starvation). Within a level, first come first served.
 - Test lanes: one of the two lanes is reserved for levels 0-1 only, so a full suite can never block a quick fix. Focused validation (up to about 12 files) may run directly in the seat's own tree when both lanes are busy.
+- `testlane` classifies submissions (blocking=0, focused=1, suite/>12 selections/long=2), reserves lane 0 (`--reserved-lane` overrides), and promotes waiting jobs every 30 minutes without preempting running jobs.
 - The phone: same levels; one phone task holds the device at most about an hour, long data entry is cut into chunks so a short check can run between them.
 - State the level and a time estimate when queuing or briefing; re-rank when an estimate proves wrong.

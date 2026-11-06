@@ -35,6 +35,8 @@ LANE_LOCK = None
 MAX_PATCH = 64 * 1024 * 1024
 MAX_JOB = MAX_PATCH * 2
 MAX_TIMEOUT = 3600
+LONG_SELECTION = 12
+AGING_SECONDS = 30 * 60
 ID = re.compile(r"[a-f0-9]{32}")
 SHA = re.compile(r"(?:[a-f0-9]{40}|[a-f0-9]{64})")
 CACHES = ("node_modules/", ".dart_tool/", "build/", "functions/lib*", ".test-build/")
@@ -209,7 +211,7 @@ def validate_command(argv, cwd, root, allow_generated=False):
 
 
 def validate_job(job, filename):
-    keys = {"id", "base", "argv", "cwd", "timeout", "patch", "attempt", "_lane"}
+    keys = {"id", "base", "argv", "cwd", "timeout", "patch", "attempt", "_lane", "level", "submitted_at"}
     required = {"id", "base", "argv", "cwd", "timeout", "patch"}
     if not isinstance(job, dict) or set(job) - keys or required - set(job):
         raise Error("invalid job schema")
@@ -222,6 +224,11 @@ def validate_job(job, filename):
         raise Error("job id must match its filename")
     if not isinstance(job.get("base"), str) or not SHA.fullmatch(job["base"]):
         raise Error("base must be a full commit hash")
+    if "level" in job and (type(job["level"]) is not int or job["level"] not in (0, 1, 2)):
+        raise Error("invalid job level")
+    if "submitted_at" in job and (type(job["submitted_at"]) not in (int, float) or
+            not math.isfinite(job["submitted_at"]) or job["submitted_at"] < 0):
+        raise Error("invalid submission time")
     timeout = job.get("timeout")
     if type(timeout) not in (int, float) or not math.isfinite(timeout) or not 0 < timeout <= MAX_TIMEOUT:
         raise Error(f"timeout must be between 0 and {MAX_TIMEOUT} seconds")
@@ -236,6 +243,64 @@ def validate_job(job, filename):
     if len(patch) > MAX_PATCH:
         raise Error("patch exceeds 64 MiB")
     return patch
+
+
+def classify_job(argv, priority=None):
+    """Level 0 is highest; command validation owns the accepted argv shapes."""
+    if priority == "blocking":
+        return 0
+    if priority == "long" or argv == ["npm", "test"]:
+        return 2
+    paths = []
+    if argv[:2] == ["flutter", "test"]:
+        i = 3
+        while i < len(argv):
+            if argv[i] in ("--concurrency", "--reporter"):
+                i += 2
+                continue
+            if not argv[i].startswith("-"):
+                paths.append(argv[i])
+            i += 1
+    elif argv[:2] == ["node", "--test"]:
+        paths = argv[2:]
+    if any(str(PurePosixPath(p)) == "test" for p in paths) or len(paths) > LONG_SELECTION:
+        return 2
+    return 1
+
+
+def scheduling(job, path, now):
+    submitted = job.get("submitted_at", path.stat().st_mtime)
+    wait = max(0, now - submitted)
+    # Promote once per elapsed waiting interval; never change a running job.
+    promotions = int(wait // AGING_SECONDS) if wait > AGING_SECONDS else 0
+    level = max(0, job.get("level", classify_job(job["argv"])) - promotions)
+    return level, submitted, wait
+
+
+def next_job(queue, number, reserved_lane):
+    now = time.time()
+    candidates = []
+    for path in (queue / "jobs").glob("*.json"):
+        if not ID.fullmatch(path.stem):
+            reject(queue, path, "invalid job filename")
+            continue
+        try:
+            job = read_json(path)
+            validate_job(job, path.stem)
+            level, submitted, _ = scheduling(job, path, now)
+            if number != reserved_lane or level <= 1:
+                candidates.append((level, submitted, path.name, path, job))
+        except FileNotFoundError:
+            continue
+        except (Error, OSError, ValueError) as exc:
+            reject(queue, path, str(exc))
+    if not candidates:
+        return None
+    _, submitted, _, path, job = min(candidates)
+    # Persist fallback metadata before recovery can replace the queue file.
+    job.setdefault("submitted_at", submitted)
+    job.setdefault("level", classify_job(job["argv"]))
+    return path, job
 
 
 def index_environment(repo, directory):
@@ -566,6 +631,8 @@ def worker(queue, number, inherited_lock, job_id):
 def runner(args):
     global LANE_LOCK
     queue = args.queue.resolve()
+    if not 0 <= args.reserved_lane < args.lanes:
+        raise Error("--reserved-lane must name a configured lane")
     queue_dirs(queue)
     runner_lock = lock(queue / "runner.lock")
     if runner_lock is None:
@@ -583,7 +650,7 @@ def runner(args):
         if queue == repo or repo in queue.parents:
             raise Error("queue must be outside the product repository")
         config = {"repo": str(repo), "base": git(repo, "rev-parse", "HEAD").decode().strip(),
-                  "lanes": args.lanes, "pid": os.getpid()}
+                  "lanes": args.lanes, "reserved_lane": args.reserved_lane, "pid": os.getpid()}
         if (queue / "runner.json").exists():
             old = read_json(queue / "runner.json")
             if old["repo"] != str(repo) or old["lanes"] != args.lanes:
@@ -605,7 +672,7 @@ def runner(args):
                 if stopping:
                     time.sleep(0.1)
                     continue
-                for number in free:
+                for number in sorted(free, key=lambda n: n != config["reserved_lane"]):
                     if (queue / "state" / f"{number}.failed").exists():
                         continue
                     if number not in prepared:
@@ -616,10 +683,11 @@ def runner(args):
                             LANE_LOCK = None
                         prepared.add(number)
                         event(queue, "lane_ready", lane=number)
-                    for path in sorted((queue / "jobs").glob("*.json")):
-                        if not ID.fullmatch(path.stem):
-                            reject(queue, path, "invalid job filename")
-                            continue
+                    while True:
+                        selected = next_job(queue, number, config["reserved_lane"])
+                        if selected is None:
+                            break
+                        path, job = selected
                         target = queue / "running" / path.name
                         if target.exists():
                             reject(queue, path, "job is already running")
@@ -629,8 +697,6 @@ def runner(args):
                             reject(queue, target, "result already exists; refusing stale job")
                             continue
                         try:
-                            job = read_json(target)
-                            validate_job(job, path.stem)
                             job["_lane"] = number
                             write_json(target, job, replace=True)
                         except (Error, OSError, ValueError) as exc:
@@ -680,7 +746,8 @@ def client(args):
     base, patch = snapshot(args.repo_dir, args.base, queue / "tmp")
     job_id = uuid.uuid4().hex
     job = {"id": job_id, "base": base, "patch": base64.b64encode(patch).decode(),
-           "argv": argv, "cwd": cwd, "timeout": args.timeout, "attempt": 0}
+           "argv": argv, "cwd": cwd, "timeout": args.timeout, "attempt": 0,
+           "level": classify_job(argv, args.priority), "submitted_at": time.time()}
     validate_job(job, job_id)
     write_json(queue / "jobs" / f"{job_id}.json", job, replace=True)
     print(f"queued: {job_id}", flush=True)
@@ -708,6 +775,20 @@ def status(queue):
         except FileNotFoundError:
             continue
     print(f"queued: {len(jobs)}\nrunning: {len(running)}")
+    now = time.time()
+    queued = []
+    for path in jobs:
+        try:
+            job = read_json(path)
+            validate_job(job, path.stem)
+            level, submitted, wait = scheduling(job, path, now)
+            queued.append((level, submitted, job["id"], int(wait)))
+        except FileNotFoundError:
+            continue
+    print(f"reserved_lane: {config.get('reserved_lane', 0) if config else 0}")
+    print(f"jobs[{len(queued)}]{{id,level,wait_seconds}}:")
+    for level, _, job_id, wait in sorted(queued):
+        print(f"  {json.dumps(job_id)},{level},{wait}")
     count = config["lanes"] if config else 0
     print(f"lanes[{count}]{{lane,status,job}}:")
     for number in range(count):
@@ -760,11 +841,15 @@ def main(argv=None):
     p.add_argument("--repo", type=Path, required=True)
     p.add_argument("--lanes", type=int, required=True, choices=range(1, 17))
     p.add_argument("--queue", type=Path, required=True)
+    p.add_argument("--reserved-lane", type=int, default=0,
+                   help="lane reserved for levels 0-1 (default: 0)")
     p = sub.add_parser("run", help="submit the worktree snapshot and wait")
     p.add_argument("--queue", type=Path, required=True)
     p.add_argument("--repo-dir", type=Path, required=True)
     p.add_argument("--base", required=True)
     p.add_argument("--cwd", choices=(".", "functions"))
+    p.add_argument("--priority", choices=("blocking", "long"),
+                   help="override automatic level: blocking=0, long=2")
     p.add_argument("--timeout", type=float, default=900)
     p.add_argument("--wait-timeout", type=float, default=7200)
     p.add_argument("argv", nargs=argparse.REMAINDER)

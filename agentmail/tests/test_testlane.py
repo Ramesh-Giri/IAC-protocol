@@ -8,6 +8,7 @@ product checkout, network, live seat or treehouse pool is used or modified.
 """
 import base64
 from importlib.machinery import SourceFileLoader
+from importlib.util import module_from_spec, spec_from_loader
 import json
 import os
 from pathlib import Path
@@ -21,7 +22,9 @@ import uuid
 from unittest.mock import patch
 
 BIN = Path(__file__).resolve().parents[1] / "bin" / "testlane"
-tl = SourceFileLoader("testlane", str(BIN)).load_module()
+loader = SourceFileLoader("testlane", str(BIN))
+tl = module_from_spec(spec_from_loader(loader.name, loader))
+loader.exec_module(tl)
 
 FAKE = r'''#!/usr/bin/env python3
 import hashlib,json,os,sys,time
@@ -40,10 +43,12 @@ if tool=='flutter' and sys.argv[1:]==['pub','get']:
  if delay.exists():
   time.sleep(float(delay.read_text()))
  (cwd/'.dart_tool').mkdir(exist_ok=True)
-elif tool=='npm' and sys.argv[1:]==['ci']:
+ (cwd/'.dart_tool/package_config.json').write_text('{}')
+elif tool=='npm' and sys.argv[1:]==['ci','--ignore-scripts']:
  compiler=cwd/'node_modules/typescript/bin/tsc'
  compiler.parent.mkdir(parents=True,exist_ok=True)
  compiler.write_text('local compiler fixture\n')
+ (cwd/'node_modules/.package-lock.json').write_text('{}')
  behavior=json.loads((root/'behavior.json').read_text())
  if behavior.get('symlink_output'):
   link=cwd/behavior['symlink_output']
@@ -125,6 +130,8 @@ else:
   (root/'junk.txt').write_text('remove')
   (root/'.trash').mkdir(exist_ok=True)
   (root/'.trash/ignored.txt').write_text('remove ignored output')
+ while behavior.get('wait_for_file') and not Path(behavior['wait_for_file']).exists():
+  time.sleep(0.02)
  print('job command:',json.dumps(sys.argv[1:]),flush=True)
  time.sleep(behavior.get('sleep',0))
  record('end')
@@ -202,11 +209,12 @@ class TestlaneTest(unittest.TestCase):
         p = self.root / "trace.jsonl"
         return [json.loads(s) for s in p.read_text().splitlines()] if p.exists() else []
 
-    def start(self, lanes=1, ready=True):
+    def start(self, lanes=1, ready=True, reserved_lane=0):
         before = len([e for e in self.events() if e["event"] == "lane_ready"])
         log = (self.root / f"runner{len(self.runners)}.log").open("w")
         p = subprocess.Popen([sys.executable, str(BIN), "runner", "--repo", str(self.repo),
-                              "--queue", str(self.queue), "--lanes", str(lanes)],
+                              "--queue", str(self.queue), "--lanes", str(lanes),
+                              "--reserved-lane", str(reserved_lane)],
                              env=self.env, stdout=log, stderr=log)
         log.close()
         self.runners.append(p)
@@ -242,6 +250,177 @@ class TestlaneTest(unittest.TestCase):
         p = self.queue / "results" / f"{job_id}.json"
         self.wait_for(p.exists)
         return json.loads(p.read_text())
+
+    def test_priority_classification(self):
+        focused = ["flutter", "test", "--no-pub", "test/example_test.dart"]
+        for argv, priority, expected in (
+                (focused, None, 1), (focused, "blocking", 0), (focused, "long", 2),
+                (["flutter", "test", "--no-pub", "./test/"], None, 2),
+                (["flutter", "test", "--no-pub", "--reporter", "expanded",
+                  "--concurrency", "1", "test"], None, 2),
+                (["flutter", "test", "--no-pub", "test"], "blocking", 0),
+                (["flutter", "test", "--no-pub"] + [f"test/{i}.dart" for i in range(12)], None, 1),
+                (["flutter", "test", "--no-pub"] + [f"test/group{i}" for i in range(13)], None, 2),
+                (["node", "--test"] + [f"test/{i}.js" for i in range(13)], None, 2),
+                (["npm", "test"], None, 2),
+                (["flutter", "analyze", "lib"], None, 1)):
+            with self.subTest(argv=argv, priority=priority):
+                self.assertEqual(tl.classify_job(argv, priority), expected)
+
+    def test_cli_persists_submission_level_and_time(self):
+        for priority, selection, level in ((None, "test/example_test.dart", 1),
+                                            (None, "test", 2),
+                                            ("blocking", "test", 0),
+                                            ("long", "test/example_test.dart", 2)):
+            flags = ["--priority", priority] if priority else []
+            before = time.time()
+            result = self.cli("run", "--queue", self.queue, "--repo-dir", self.repo,
+                              "--base", self.base, "--wait-timeout", "0.01", *flags,
+                              "--", "flutter", "test", "--no-pub", selection)
+            self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+            job_id = result.stdout.splitlines()[0].removeprefix("queued: ")
+            job = tl.read_json(self.queue / "jobs" / f"{job_id}.json")
+            self.assertEqual(job["level"], level)
+            self.assertGreaterEqual(job["submitted_at"], before)
+            self.assertLessEqual(job["submitted_at"], time.time())
+
+    def test_priority_then_fifo_not_job_id_order(self):
+        jobs = []
+        for identity, level, submitted in (("1", 1, 300), ("f", 1, 100), ("e", 0, 400)):
+            job = self.job()
+            job.update(id=identity * 32, level=level, submitted_at=submitted)
+            self.submit(job)
+            jobs.append(job)
+        with patch.object(tl.time, "time", return_value=500):
+            for expected in (jobs[2], jobs[1], jobs[0]):
+                path, actual = tl.next_job(self.queue, 1, 0)
+                self.assertEqual(actual["id"], expected["id"])
+                path.unlink()
+
+    def test_aging_after_30_minutes_with_fake_clock(self):
+        job = self.job()
+        job.update(level=2, submitted_at=100)
+        self.submit(job)
+        with patch.object(tl.time, "time", return_value=1900):
+            self.assertIsNone(tl.next_job(self.queue, 0, 0))
+        for now, expected in ((1901, 1), (3701, 0)):
+            with patch.object(tl.time, "time", return_value=now):
+                path, selected = tl.next_job(self.queue, 0, 0)
+                self.assertEqual(tl.scheduling(selected, path, now)[0], expected)
+                self.assertEqual(selected["level"], 2)
+
+    def test_legacy_job_uses_file_time_for_fifo_and_classification(self):
+        old = self.job()
+        new = self.job(argv=["flutter", "test", "--no-pub", "test"])
+        for job, submitted in ((old, 100), (new, 200)):
+            self.submit(job)
+            os.utime(self.queue / "jobs" / f"{job['id']}.json", (submitted, submitted))
+        with patch.object(tl.time, "time", return_value=500):
+            path, job = tl.next_job(self.queue, 0, 0)
+            self.assertEqual(job["id"], old["id"])
+            self.assertEqual((job["submitted_at"], job["level"]), (100, 1))
+            path.unlink()
+            self.assertIsNone(tl.next_job(self.queue, 0, 0))
+
+    def test_invalid_scheduling_metadata_is_rejected(self):
+        for field, value in (("level", -1), ("level", 3), ("level", True),
+                             ("submitted_at", float("nan")), ("submitted_at", -1),
+                             ("submitted_at", True)):
+            with self.subTest(field=field, value=value):
+                job = self.job()
+                job[field] = value
+                self.submit(job)
+                self.assertIsNone(tl.next_job(self.queue, 1, 0))
+                self.assertEqual(tl.read_json(self.queue / "results" / f"{job['id']}.json")["status"],
+                                 "rejected")
+
+    def test_runner_reserved_lane_skips_long_and_runs_focused(self):
+        long = self.job(argv=["flutter", "test", "--no-pub", "test"])
+        long.update(level=2, submitted_at=time.time())
+        short = self.job()
+        short.update(level=1, submitted_at=time.time())
+        self.submit(long)
+        self.submit(short)
+        self.start()
+        self.assertEqual(self.result(short["id"])["lane"], 0)
+        self.assertTrue((self.queue / "jobs" / f"{long['id']}.json").exists())
+        self.assertFalse(any(e["event"] == "started" and e["id"] == long["id"] for e in self.events()))
+
+    def test_runner_default_general_lane_runs_long(self):
+        long = self.job(argv=["flutter", "test", "--no-pub", "test"])
+        long.update(level=2, submitted_at=time.time())
+        self.submit(long)
+        self.start(lanes=2)
+        self.assertEqual(self.result(long["id"])["lane"], 1)
+
+    def test_recovery_preserves_submission_level_and_fifo_time(self):
+        job = self.job()
+        job.update(_lane=1, level=2, submitted_at=100)
+        path = self.queue / "running" / f"{job['id']}.json"
+        tl.write_json(path, job)
+        tl.recover(self.queue, {1})
+        pending = self.queue / "jobs" / path.name
+        recovered = tl.read_json(pending)
+        self.assertEqual((recovered["level"], recovered["submitted_at"], recovered["attempt"]),
+                         (2, 100, 1))
+        with patch.object(tl.time, "time", return_value=1901):
+            self.assertEqual(tl.next_job(self.queue, 0, 0)[1]["id"], job["id"])
+
+    def test_runner_custom_reserved_lane_and_general_lane_run_long(self):
+        long = self.job(argv=["flutter", "test", "--no-pub", "test"])
+        long.update(level=2, submitted_at=time.time())
+        self.submit(long)
+        short = self.job()
+        self.submit(short)
+        self.start(lanes=2, reserved_lane=1)
+        self.assertEqual(self.result(long["id"])["lane"], 0)
+        self.assertEqual(self.result(short["id"])["lane"], 1)
+
+    def test_runner_priority_fifo_and_no_preemption(self):
+        release = self.root / "release-job"
+        self.addCleanup(release.touch)
+        self.behavior(wait_for_file=str(release))
+        self.start()
+        first = self.job(timeout=15)
+        self.submit(first)
+        self.wait_for(lambda: any(e["event"] == "started" and e["id"] == first["id"]
+                                 for e in self.events()))
+        queued = []
+        for identity, level, age in (("1", 1, 0), ("f", 1, 10), ("e", 0, 0)):
+            job = self.job()
+            job.update(id=identity * 32, level=level, submitted_at=time.time() - age)
+            self.submit(job)
+            queued.append(job)
+        release.touch()
+        for job in (first, *queued):
+            self.assertEqual(self.result(job["id"])["exit_code"], 0)
+        order = [e["id"] for e in self.events() if e["event"] == "started"]
+        self.assertEqual(order, [first["id"], queued[2]["id"], queued[1]["id"], queued[0]["id"]])
+
+    def test_status_shows_levels_wait_and_reserved_lane(self):
+        tl.queue_dirs(self.queue)
+        tl.write_json(self.queue / "runner.json", {"lanes": 2, "reserved_lane": 1})
+        for identity, level, submitted in (("a", 2, 100), ("b", 1, 1900)):
+            job = self.job()
+            job.update(id=identity * 32, level=level, submitted_at=submitted)
+            self.submit(job)
+        from contextlib import redirect_stdout
+        from io import StringIO
+        output = StringIO()
+        with patch.object(tl.time, "time", return_value=1901), redirect_stdout(output):
+            self.assertEqual(tl.status(self.queue), 0)
+        self.assertEqual(output.getvalue(),
+                         'queued: 2\nrunning: 0\nreserved_lane: 1\n'
+                         'jobs[2]{id,level,wait_seconds}:\n'
+                         f'  "{"a" * 32}",1,1801\n  "{"b" * 32}",1,1\n'
+                         'lanes[2]{lane,status,job}:\n  0,idle,null\n  1,idle,null\n'
+                         'runner: "stopped"\n')
+
+    def test_runner_rejects_reserved_lane_outside_pool(self):
+        result = self.cli("runner", "--repo", self.repo, "--queue", self.queue,
+                          "--lanes", "2", "--reserved-lane", "2")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--reserved-lane must name a configured lane", result.stdout)
 
     def test_cli_empty_status_version_and_unknown_flag(self):
         result = self.cli("status", "--queue", self.queue)
@@ -447,7 +626,7 @@ class TestlaneTest(unittest.TestCase):
 
     def test_recovery_publish_crash_does_not_consume_the_retry(self):
         original = self.job()
-        original["_lane"] = 0
+        original.update(_lane=0, level=1, submitted_at=time.time() - 60)
         retried = dict(original, attempt=1)
         retried.pop("_lane")
         tl.write_json(self.queue / "running" / f"{original['id']}.json", original)
