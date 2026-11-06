@@ -484,3 +484,7 @@ When the operator reports a broken screen, the state design is fixed in the same
 Origin: 2026-11-03, the other-user profile failure screen on app ("is that how you show an error screen? fix that first, then find out why").
 
 Revision: public rules generalized; original site-specific rules are preserved in the ignored local overlay.
+
+## 54. Shortest remaining time next (SRTN) for all scheduling
+
+Ramesh, 2026-11-06: "use SRTN - shortest remaining time next - for all the tasks". Whenever work competes for the same resource (test lanes, the phone, seats, builds, merges, deploy order, review turns), run the item with the shortest estimated remaining time first, and re-decide whenever a new item arrives or one finishes. A small hotfix never waits behind a full suite: run its focused tests directly (or jump the lane queue), merge it first, ship it first. Long jobs (full suites, whole-range data entry, research) yield to short ones that unblock the human. State the remaining-time estimate when queuing or briefing; re-estimate on every progress report.
