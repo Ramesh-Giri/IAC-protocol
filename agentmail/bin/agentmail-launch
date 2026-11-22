@@ -57,6 +57,21 @@ import model_guard as _mg
 
 TOOL_VERSION = "1.1.0"
 
+
+def _log_launch_event(seat, mail_root):
+    """Best effort evidence; legacy seats and event failures never block startup."""
+    try:
+        from fleet_events import EventType, append_event, single_task_id
+        rules = Path(__file__).resolve().parents[1] / "OPERATIONAL_RULES.md"
+        revision = subprocess.run(["git", "hash-object", "--", str(rules)],
+                                  capture_output=True, text=True, timeout=10, check=True).stdout.strip()
+        append_event(mail_root, EventType.LAUNCHED, single_task_id(seat), seat["id"],
+                     os.environ.get("AGENTMAIL_SEAT") or seat["id"],
+                     runtime=seat.get("runtime") or "claude-code", model=seat.get("model"),
+                     effort=seat.get("effort"), codex_home=seat.get("codex_home"), rules_revision=revision)
+    except Exception as exc:
+        print(f"warning: launched event for {seat['id']} could not be written: {exc}", file=sys.stderr)
+
 # ---------------------------------------------------------------------------
 # Advisory model guard: report and log the roster's own choice without substituting it.
 # Site-specific authorization history and model policy live in ignored local/.
@@ -919,6 +934,8 @@ def main(argv=None) -> int:
         print(f"  {'launched' if good else 'FAILED  '}  {seat['id']}"
               + ("" if good else f"   {detail}"))
         ok += 1 if good else 0
+        if good:
+            _log_launch_event(seat, mail_root)
         _log_launch_decision(seat, mail_root)  # never raises; see its own try/except
     print(f"\n{ok}/{len(chosen)} launched.")
     print("Each window is titled with its seat id. Confirm they are alive with:")

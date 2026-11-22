@@ -153,7 +153,7 @@ The guard is advisory in the launcher and never grants permission or substitutes
 Prepare durable context before moving a task across runtimes.
 Accept uncommitted work from sandboxed authors and route denied Git writes to an authorized integrator.
 Do not retry denied operations or assume a directory grant overrides the sandbox.
-Close finished seats after complete handoff evidence; do not keep idle seats for speculative follow-ups.
+Close finished seats with `seat-close <seat> --outcome <enum> --reason TEXT` after complete handoff evidence; do not keep idle seats for speculative follow-ups.
 Batch useful mail and link artifacts, while always reading decisions, verdicts, questions, blockers and DONE bodies in full.
 Nudge an idle polling-only runtime after mail delivery and verify it resumes work.
 See [TOKEN_EFFICIENCY.md](TOKEN_EFFICIENCY.md).
@@ -176,6 +176,8 @@ A seat receives one task ID for its lifetime.
 Corrections, unblocks and continuations of that same task may use the existing seat.
 A new task ID requires a fresh seat, except for the scoped standing integrator in rule 31.
 Before returning a lease, verify all edits and unpushed commits are integrated or durably preserved.
+Record closure with `agentmail/bin/seat-close <seat> --outcome <enum> --reason TEXT`; merged outcomes require `--repo PATH --commit FULL_SHA`, and superseded requires `--replaced-by TASK`.
+Record integration separately with `agentmail/bin/fleet-event integrated --task-id TASK --seat SEAT --actor ACTOR --repo PATH --commit FULL_SHA --branch BRANCH`.
 Closing a runner does not return its lease.
 Never force-return dirty or unpreserved work.
 
@@ -252,7 +254,7 @@ For a one-grid layout, holder and seats share the window the operator actually s
 Verify the client view after every launch or closure.
 Do not use placeholder sleep panes or hidden windows to claim visibility.
 An alert-only `fleet-guard` reports hidden views, stray panes, orphan watchers and prompts; the supervisor handles each finding.
-Closing a seat preserves work and removes only its identified runner, pane and watcher.
+Record the outcome with `seat-close`, which preserves work and stops no processes; then remove only the seat's identified runner, pane and watcher.
 
 ## 31. A standing integrator owns integration
 
@@ -393,7 +395,7 @@ The overseer verifies the next worker has read the handoff, acknowledged the exa
 Unread mail, a running mail-watch process and an attached terminal are not proof of progress.
 The overseer must not end an active completion run with known runnable handoffs left unprocessed; process arrival alerts and reconcile idle seats before yielding.
 If runtime limits prevent continued supervision or wake delivery, report the exact stopped state and preserved next step before handing back control, and never claim unattended monitoring remains active.
-Completed units still close after verified evidence and process exit; this waiting rule does not retain finished seats for speculative future work.
+Completed units still close with `seat-close` and an outcome after verified evidence and process exit; this waiting rule does not retain finished seats for speculative future work.
 This rule does not waive mandatory independent review, safeguards, runtime restrictions, or the human-only cloud and deployment boundary.
 
 ## 45. One author, one reviewer, sized to the change

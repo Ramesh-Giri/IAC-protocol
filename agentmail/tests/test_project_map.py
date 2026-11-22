@@ -1,13 +1,16 @@
 """project-map: purposes come from header comments (tooling noise ignored),
 links resolve package and relative imports, undocumented files stay visible."""
 from importlib.machinery import SourceFileLoader
+from importlib.util import module_from_spec, spec_from_loader
 from pathlib import Path
 import subprocess
 import tempfile
 import unittest
 
 BASE = Path(__file__).resolve().parents[1]
-pm = SourceFileLoader("project_map", str(BASE / "bin" / "project-map")).load_module()
+loader = SourceFileLoader("project_map", str(BASE / "bin" / "project-map"))
+pm = module_from_spec(spec_from_loader(loader.name, loader))
+loader.exec_module(pm)
 
 
 class ProjectMapTest(unittest.TestCase):
