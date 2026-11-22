@@ -1,6 +1,7 @@
 """change-report: facts come from a real throwaway git repo, so the parser is
 checked against git's own diff output, not a hand-written diff."""
 from importlib.machinery import SourceFileLoader
+from importlib.util import module_from_spec, spec_from_loader
 from pathlib import Path
 import subprocess
 import sys
@@ -8,7 +9,9 @@ import tempfile
 import unittest
 
 BASE = Path(__file__).resolve().parents[1]
-cr = SourceFileLoader("change_report", str(BASE / "bin" / "change-report")).load_module()
+loader = SourceFileLoader("change_report", str(BASE / "bin" / "change-report"))
+cr = module_from_spec(spec_from_loader(loader.name, loader))
+loader.exec_module(cr)
 
 
 def sh(repo, *args):

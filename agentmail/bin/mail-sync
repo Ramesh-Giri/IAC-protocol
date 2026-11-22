@@ -28,14 +28,14 @@ def cycle(root, timeout):
         raise ValueError("mail-sync requires a dedicated mail repository; embedded product channels use manual scoped commits")
     roster(root)
     git(root, timeout, "remote", "get-url", "origin")
-    with lock(root, "sync"), lock(root, "transport", wait=10):
+    with lock(root, "sync"), lock(root, "transport", wait=10), lock(root, "events", wait=10):
         gitdir = Path(git(root, timeout, "rev-parse", "--absolute-git-dir").stdout.strip())
         if any((gitdir / x).exists() for x in ("rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD")):
             raise RuntimeError("Git operation unresolved; resolve it manually before syncing")
         # Whitelist the entire tracked payload, not just the directory name.
         names = git(root, timeout, "ls-files", "-z", "--cached", "--others", "--exclude-standard").stdout.split("\0")
         for name in filter(None, names):
-            allowed = name in ("roster.json", ".gitignore") or re.fullmatch(r"[a-z0-9][a-z0-9_-]*/(?:new|cur)/(?:[^/]+\.md|\.keep)", name) or re.fullmatch(r"archive/(?:[^/]+\.md|\.keep)", name)
+            allowed = name in ("roster.json", "events.jsonl", ".gitignore") or re.fullmatch(r"[a-z0-9][a-z0-9_-]*/(?:new|cur)/(?:[^/]+\.md|\.keep)", name) or re.fullmatch(r"archive/(?:[^/]+\.md|\.keep)", name)
             local = name == "local.json" or name.startswith(".locks/") or re.fullmatch(r"[^/]+/(?:tmp/.*|bridge\.log)", name)
             if local and not git(root, timeout, "ls-files", "--error-unmatch", name, check=False).returncode:
                 raise ValueError(f"machine-local state is tracked: {name}; untrack explicitly first")

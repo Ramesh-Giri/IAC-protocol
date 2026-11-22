@@ -257,7 +257,7 @@ def send_main():
     for name in ("from", "to", "subject"):
         p.add_argument("--" + name, required=True)
     p.add_argument("--type", default="info")
-    for name in ("thread", "in-reply-to", "supersedes", "project"):
+    for name in ("thread", "in-reply-to", "supersedes", "project", "task-id"):
         p.add_argument("--" + name)
     p.add_argument("--intent", choices=["research", "requirements", "proposal", "implementation", "review", "decision"])
     p.add_argument("--authority", choices=["product", "technical", "joint"])
@@ -274,6 +274,20 @@ def send_main():
     if (args.intent or args.authority) and not args.project:
         p.error("intent/authority requires --project")
     meta = {k: getattr(args, k) for k in ("thread", "in_reply_to", "supersedes", "project", "intent", "authority") if getattr(args, k)}
+    task_id = args.task_id
+    if task_id is None and args.type in {"task", "done", "review"}:
+        from fleet_events import single_task_id
+        agents = roster(args.mail_root).get("agents", {})
+        seats = (args.to, getattr(args, "from")) if args.type == "task" else (getattr(args, "from"), args.to)
+        for seat in seats:
+            entry = agents.get(seat, {})
+            if entry.get("role") in {"child", "worker"}:
+                task_id = single_task_id(entry)
+                break  # Do not attribute an ambiguous author task to its reviewer.
+    if task_id is not None:
+        if not line(task_id).strip():
+            p.error("--task-id must be nonempty single-line text")
+        meta["task_id"] = task_id
     requested = not args.no_reply and (args.ack or args.type in REQUEST_TYPES)
     meta.update(expects_reply=str(requested).lower(), ack="requested" if requested else "none")
     for ref in args.ref:

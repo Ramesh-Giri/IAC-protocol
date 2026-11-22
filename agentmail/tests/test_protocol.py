@@ -17,6 +17,7 @@ from unittest.mock import patch
 BASE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BASE / "lib"))
 import iac
+from fleet_events import append_event, EventType
 
 
 class Protocol(unittest.TestCase):
@@ -358,6 +359,7 @@ class Protocol(unittest.TestCase):
         (self.root / "local.json").write_text('{"site":"local-only"}')
         (self.root / "b/tmp/retry.json").write_text("private")
         self.send(kind="question")
+        append_event(self.root, EventType.DONE, "demo-task", "b", "b", reason="fixture complete")
         result = self.cli("mail-sync", "--once")
         self.assertEqual(result.returncode, 0, result.stderr)
         tracked = self.git(self.root, "ls-files")
@@ -365,6 +367,7 @@ class Protocol(unittest.TestCase):
         self.assertNotIn("retry.json", tracked)
         peer = Path(self.temp.name) / "peer"
         self.git(Path(self.temp.name), "clone", "-q", str(remote), str(peer))
+        self.assertEqual((peer / "events.jsonl").read_bytes(), (self.root / "events.jsonl").read_bytes())
         result = self.cli("mail-read", "b", root=peer)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.cli("mail-sync", "--once", root=peer).returncode, 0)

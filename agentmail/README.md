@@ -93,13 +93,24 @@ A shared directory, used with **Maildir semantics**, gives you:
 ```
 .agent-mail/
 ├── roster.json              # who exists, their repo, model tier, capabilities
+├── events.jsonl             # append-only task lifecycle evidence
 ├── <agent>/                 # one maildir per agent
 │   ├── tmp/                 # senders compose here (invisible to readers)
 │   ├── new/                 # unread mail — the ONLY thing watchers watch
 │   └── cur/                 # read mail (moving new/ → cur/ IS the ack)
 ├── archive/                 # resolved threads, one file per topic
-└── bin/                     # mail-send, mail-check, mail-read, mail-watch
+└── bin/                     # mail-send, mail-check, mail-read, mail-watch, fleet-event, seat-close
 ```
+
+Helpers accept `-d MAIL_ROOT` (or `AGENTMAIL_DIR`).
+`fleet-event <event-type> --task-id TASK --seat SEAT --actor ACTOR` appends one locked UTF-8 JSON event; add `--repo PATH --commit FULL_SHA --branch BRANCH` for integration evidence.
+`seat-close SEAT --outcome OUTCOME --reason TEXT` atomically records a terminal roster outcome and appends a closed event, without stopping processes.
+Merged outcomes require verified `--repo PATH --commit FULL_SHA` (repeat `--commit`); superseded requires `--replaced-by TASK`.
+Actor defaults to `AGENTMAIL_SEAT` or `roster_owner`; closure uses the roster task ID, with `--task-id` available for legacy entries.
+Identical closure retries are no-ops; conflicting outcomes are refused.
+Event append and roster replacement are separate durable writes, so a crash between them may leave an event before the roster update; errors never report success.
+`mail-send --task-id TASK` adds an optional header; task/done/review messages infer it from the worker's single roster task ID when available.
+Use each helper's `--help` for accepted enums and flags.
 
 ## Quickstart
 
