@@ -1,3 +1,4 @@
+<!-- Introduces the AgentMail toolkit, operational documents and repository-local workflow skills. -->
 # AgentMail
 
 **File-based IPC and orchestration for multi-agent AI coding sessions.**
@@ -153,6 +154,21 @@ echo "The payments API contract changed, see PR #30." | \
   developers, using git as the transport.
 - **[DESIGN.md](DESIGN.md)** — why the actor model won over client–server,
   microkernel, brokers, blackboards, and tuple spaces.
+
+## IAC workflow skills
+
+Read the [skills index](skills/README.md) for six original repository-local workflows usable by Codex and Claude seats:
+
+- [build-gate](skills/build-gate/SKILL.md): build timing, focused proof and shared capacity.
+- [acceptance-gate](skills/acceptance-gate/SKILL.md): independent checker reruns before acceptance.
+- [evidence-loop](skills/evidence-loop/SKILL.md): bounded research, committed plan and break pass.
+- [scheduled-loop](skills/scheduled-loop/SKILL.md): charter, independent outcome check and bounded overnight runs.
+- [test-value-audit](skills/test-value-audit/SKILL.md): report-only test analysis and isolated base controls.
+- [flutter-a11y-audit](skills/flutter-a11y-audit/SKILL.md): Flutter accessibility within the Material 3 gate.
+
+Task briefs can link directly to these files; no third-party install or global registration is needed.
+The index records source credit, inspected revisions/licenses, risks and shared seat boundaries.
+Skills do not expand roster delegation or authorize scheduling, cloud operations, publishing or deployment.
 
 ## Vendor-neutral by construction
 

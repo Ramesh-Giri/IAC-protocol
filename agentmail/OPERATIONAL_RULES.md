@@ -498,3 +498,33 @@ Ramesh, 2026-11-06 (replaces "SRTN for all tasks" from the same day after weighi
 - `testlane` classifies submissions (blocking=0, focused=1, suite/>12 selections/long=2), reserves lane 0 (`--reserved-lane` overrides), and promotes waiting jobs every 30 minutes without preempting running jobs.
 - The phone: same levels; one phone task holds the device at most about an hour, long data entry is cut into chunks so a short check can run between them.
 - State the level and a time estimate when queuing or briefing; re-rank when an estimate proves wrong.
+
+## 55. Decide build timing before consuming build capacity
+
+Apply [build-gate](skills/build-gate/SKILL.md) before a heavy build, full qualification or deployment handoff.
+Name the input, focused proof, build owner and queue priority; follow rules 29 and 54 and the site's stricter capacity limits.
+
+## 56. Verify completion through a separate checker
+
+Apply [acceptance-gate](skills/acceptance-gate/SKILL.md) before accepting DONE or recommending a merge.
+Require the checker's own decisive rerun evidence; missing required evidence leaves acceptance uncertain.
+
+## 57. Plan from evidence and verify adversarially
+
+Apply [evidence-loop](skills/evidence-loop/SKILL.md) to non-trivial multi-step outcomes.
+Commit the written plan through the authorized owner, delegate implementation and complete rule 43's independent break pass within the site seat cap.
+
+## 58. Bound scheduled work by outcomes and hard caps
+
+Apply [scheduled-loop](skills/scheduled-loop/SKILL.md) when preparing or revising recurring or overnight agent work.
+Name off-limits work, an independent outcome check, enforced caps and the kill switch; preparation does not authorize activation.
+
+## 59. Audit test value without silently changing coverage
+
+Apply [test-value-audit](skills/test-value-audit/SKILL.md) for a report-only review of weak tests or claimed regression sensitivity.
+Use an isolated treehouse base control; separate assertion evidence, setup failures and tests that protect existing invariants.
+
+## 60. Verify Flutter accessibility with the design gate
+
+Apply [flutter-a11y-audit](skills/flutter-a11y-audit/SKILL.md) for Flutter UI changes and accessibility reviews.
+Include semantics, hit areas, contrast, focus/reading order, text scaling and motion with actual assistive-tool evidence alongside the existing design review.
