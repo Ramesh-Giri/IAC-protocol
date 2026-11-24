@@ -17,9 +17,10 @@ onboarding during toolkit maintenance, review or a clone-only request.
   selected projects are a complete valid setup. Team roster visibility is
   not a request to clone or launch all its projects.
 - Projects may also start as new, user-selected folders without a remote.
-  Offer optional six-file context per project; declining skips that step
-  completely. Personalized context belongs in PROJECT_ROOT/context/, not
-  the IAC clone's root or the toolkit. See [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md).
+  Offer optional six-file context per project; declining skips that interview and those six files.
+  Every new project still receives the required `context/security-privacy-baseline.md` under rule 64.
+  Project context belongs in PROJECT_ROOT/context/, not the IAC clone or toolkit.
+  See [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md).
 - Ask only for missing information. A name, destination, URL or permission
   already supplied by the human should not be requested again.
 - Keep manual clone names. Ask for workspace name/location before an
@@ -103,8 +104,9 @@ cross-platform mobile, backend, desktop or other), purpose and requirements,
 then tailor follow-ups to the answer. A framework such as Next.js refines a
 web choice; do not treat it as a requirement for every project.
 
-If no, do not run the context questionnaire or create templates. Continue
-the chosen blank-project, approved scaffold, or existing-repo setup normally.
+If no, do not run the optional context questionnaire or create its six files.
+Continue the chosen blank-project, approved scaffold, or existing-repo setup
+normally; the new-project security baseline below still applies.
 Do not require a project URL for a new local project or automatically create
 a GitHub repository for it.
 
@@ -155,16 +157,23 @@ For each approved URL:
 6. Run the project's documented baseline checks where feasible. Record
    existing failures separately from IAC failures.
 
-For each requested new project, confirm its name and absolute destination
-separately from the IAC workspace name. Create only that approved project
-folder, after checking for collisions and reserved/toolkit/mail paths. It
-can be a workspace child or an external folder; it must not be the IAC root.
-Ask whether the developer wants a blank project or a framework scaffold if
-not already specified. Run an authorized scaffold before creating context
-when it needs an empty directory. Context consent alone does not authorize
-package installation, application implementation, Git initialization or a
-remote creation. Mark baseline tests unavailable until code/tooling exists;
-do not claim the new app is working just because its folder exists.
+For each requested new project, confirm its name and absolute destination separately from the IAC workspace name.
+Create only that approved project folder, after checking for collisions and reserved/toolkit/mail paths.
+It can be a workspace child or an external folder; it must not be the IAC root.
+Ask whether the developer wants a blank project or a framework scaffold if not already specified.
+Run an authorized scaffold before creating context when it needs an empty directory, before adding the baseline or optional context.
+Context consent alone does not authorize package installation, application implementation, Git initialization or a remote creation.
+Mark baseline tests unavailable until code/tooling exists; do not claim the new app is working just because its folder exists.
+
+For **every new project**, copy and fill [templates/project-context/security-privacy-baseline.md](templates/project-context/security-privacy-baseline.md) at `PROJECT_ROOT/context/security-privacy-baseline.md`, **even when** optional context is declined.
+Follow [security-privacy-baseline](skills/security-privacy-baseline/SKILL.md) and [rule 64](OPERATIONAL_RULES.md#64-start-every-project-with-a-security-and-privacy-baseline).
+Fill identity/scope/owners with verified facts or Open, keep checks unverified until evidenced, and create owned follow-up tasks.
+Document where/how each service will deploy, exact deploy/verification steps and rollback, marking unbuilt-service plans Proposed.
+Document who can deploy each service, its hosting-account owner and operator-confirmed access from day one; create an owned blocker for missing permissions without collecting credentials.
+Preserve an existing baseline; never overwrite it or other context.
+This step authorizes no application implementation, scan, cloud operation or deployment.
+The six optional context files remain optional.
+Existing projects need the baseline before their next launch/release.
 
 For each context opt-in, complete the short interview and review summary in
 [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md), then generate the six personalized
@@ -187,7 +196,7 @@ The resulting workspace may contain just:
 chosen-name/
 ├── agentmail/       # toolkit, including lib/
 ├── api/            # selected cloned or new project; its own lifecycle
-│   └── context/    # six tailored files, only if the human opted in
+│   └── context/    # required new-project baseline; six more files on opt-in
 ├── .agent-mail/     # local main/project coordination
 ├── iac-team.json    # optional connection descriptor in a configured fork
 └── .team-mail/      # optional separate private mail Git clone
@@ -394,6 +403,8 @@ Finish with a short status, not another installation checklist:
 - Context generated or declined for each project; show the generated path,
   unresolved decisions and how future sessions will read it. A context-only
   new project is planned, not an implemented application.
+- For each new project, show its required baseline path, initial unverified status, owners and deployment-runbook tasks, including when optional context was declined.
+  Launches/releases later report rule-64 status and blockers.
 - Local main/project seats and what is actually running.
 - Local mail result and, for a team, cross-site reply evidence.
 - For team mode: shared root and remote, connection saved/pushed or pending,
@@ -422,3 +433,5 @@ workspace name, current mail network and existing projects. There is no need
 to rebuild the workspace or download the rest of the team's repositories.
 Offer the optional context step for that project without recreating other
 projects' context or forcing a developer who declined to adopt it.
+Every newly created project still receives the required baseline described
+above, even when the optional six-file context is declined.

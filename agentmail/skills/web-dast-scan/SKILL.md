@@ -7,6 +7,9 @@ description: Run an inventory-only ZAP passive baseline weekly and after web dep
 
 Apply rule 62 alongside rule 41. Read the site's ignored `local/websec.local.json`, roster and deployment task; do not copy real hosts, paths, tokens or findings into tracked files. Research and this skill grant no permission to scan another host, run active tests, deploy, or change inventory.
 
+Link reviewed scan evidence and findings to the project's [security-privacy-baseline](../security-privacy-baseline/SKILL.md) under rule 64 after every web deploy.
+A completed ZAP scan does not verify all privacy, authorization or secure-coding controls; preserve their separate owners and evidence.
+
 The rule-41 inventory remains the sole authority for **hosts and paths**. The current `websec-check` rejects extra scan fields, so keep it unchanged and place optional per-host scan metadata in the ignored sibling `local/websec-scans.local.json`. The wrapper merges that policy overlay into the selected base inventory entry. The overlay may add only `active_scan_allowed` and `zap_rules` to an existing host: it cannot introduce a host, add paths, or override scan fields already present in the base. `--scan-policy <file>` selects an explicit overlay and fails if missing; otherwise the sibling file is optional. This separation preserves the original checker while reusing its target inventory and reason/expiry convention. Absent permission metadata means passive-only; absent rule metadata means no exceptions.
 
 ## Default workflow

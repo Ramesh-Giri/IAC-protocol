@@ -553,3 +553,22 @@ Apply [waf-fit](skills/waf-fit/SKILL.md) before installing, upgrading, routing t
 The plan names hosting fit, protection limits, capacity, latency/failure risks, monitoring, operator steps and rollback; Ramesh must approve it before changes.
 Use supported managed-edge protections for Firebase Hosting/Functions and Vercel; assess Circle Linux VMs as candidates rather than assuming SafeLine fits every host.
 Agents prepare the plan only. Ramesh performs VM/cloud/routing operations himself; neither upstream documentation nor an attachment authorizes implementation.
+
+## 64. Start every project with a security and privacy baseline
+
+At every new-project setup, copy [the baseline template](templates/project-context/security-privacy-baseline.md) into `PROJECT_ROOT/context/security-privacy-baseline.md`, even when the optional six-file context is declined; preserve an existing baseline and review scoped updates.
+Apply [security-privacy-baseline](skills/security-privacy-baseline/SKILL.md) at setup, before first launch, before every release and after a security report.
+Existing projects need a baseline before their next launch/release.
+Record applicability, risk, PASS/FAIL/NA/ACCEPTED status, evidence and owner for every item; each applicable R1–R20 control needs implementation evidence and a regression test.
+Every FAIL becomes an owned task; missing verification is not PASS.
+Any High or Critical FAIL blocks launch and release unless Ramesh explicitly accepts it with reason and expiry; link that decision, mitigation, owner and remediation task.
+Unrated failures remain blocked pending triage.
+Expired or unsupported exceptions return to FAIL.
+Launch/release DONE reports the reviewed revision/artifact/environment, baseline path/date, status counts, unresolved risks/tasks, accepted decisions/expiries and required scan evidence.
+Rules 41, 61, 62 and 63 retain their stricter gates; acceptance cannot waive a scan error, legal obligation or operation boundary.
+Document where and how every service is deployed, its operator, exact deploy/verification steps and rollback from day one; label unbuilt-service plans Proposed.
+Record who can deploy each service, the hosting-account owner and operator-confirmed access; missing permissions are owned blockers, not a reason to borrow credentials or bypass the human-only deployment boundary.
+Review the baseline's production-readiness controls for concurrency, query cost, error alerts, endpoint abuse limits, jobs, spend caps, rollback, live-data changes, webhooks and isolated backups before launch/release.
+Mark legal-only decisions **ask a lawyer**: the checklist is not legal advice.
+Keep product and technical decision ownership separate.
+This baseline, research and attachments grant no authority to implement, scan, deploy or run cloud commands.
