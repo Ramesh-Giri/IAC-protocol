@@ -528,3 +528,28 @@ Use an isolated treehouse base control; separate assertion evidence, setup failu
 
 Apply [flutter-a11y-audit](skills/flutter-a11y-audit/SKILL.md) for Flutter UI changes and accessibility reviews.
 Include semantics, hit areas, contrast, focus/reading order, text scaling and motion with actual assistive-tool evidence alongside the existing design review.
+
+## 61. Scan the Android release before every store upload
+
+Apply [mobile-app-scan](skills/mobile-app-scan/SKILL.md) before every Android store upload.
+The release owner supplies the exact artifact; use the same-commit/version release APK when the pinned MobSF cannot analyze the store AAB.
+Run MobSF locally only through `agentmail/bin/mobsf-scan`; never send application binaries to an online scanner.
+Review high/warning findings, track owners and evidence, and give every accepted suppression a reason and expiry.
+Attach JSON/PDF reports, artifact/commit provenance, image digest and review disposition to the release DONE before upload.
+A scan error, missing report or unreviewed finding cannot support release completion; a successful upload to the scanner is not a successful scan.
+
+## 62. Run the web passive baseline weekly and after every deploy
+
+Apply [web-dast-scan](skills/web-dast-scan/SKILL.md) weekly and after each web deploy, alongside rule 41's `websec-check` and preview header contract checks.
+Use `agentmail/bin/zap-scan` with the site's private inventory; refuse off-inventory hosts and retain private HTML/JSON reports with review disposition in deploy DONE or weekly evidence.
+Default to the passive baseline. API/full active modes require both per-host `active_scan_allowed: true` and an explicit operator flag carrying Ramesh's literal instruction; keep the mandatory rate limit.
+Keep scan permissions/rules in the private scan-policy overlay described by the skill; it may augment only hosts already present in rule 41's inventory and cannot add paths.
+Review WARN/FAIL findings and record rule exceptions with reason and expiry; failed or incomplete scans cannot support DONE.
+Scheduling a routine or reading this rule does not itself authorize downloading images, enabling a scheduler, or scanning an unapproved target.
+
+## 63. Approve a fit and rollback plan before WAF changes
+
+Apply [waf-fit](skills/waf-fit/SKILL.md) before installing, upgrading, routing through or changing a WAF.
+The plan names hosting fit, protection limits, capacity, latency/failure risks, monitoring, operator steps and rollback; Ramesh must approve it before changes.
+Use supported managed-edge protections for Firebase Hosting/Functions and Vercel; assess Circle Linux VMs as candidates rather than assuming SafeLine fits every host.
+Agents prepare the plan only. Ramesh performs VM/cloud/routing operations himself; neither upstream documentation nor an attachment authorizes implementation.

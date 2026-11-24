@@ -1,0 +1,453 @@
+#!/usr/bin/env python3
+"""Inventory-only ZAP gate. Default: bounded passive baseline, no active scan.
+
+Runs the separately installed upstream image without downloads or add-on updates.
+Active modes require the host's boolean permission plus Ramesh's literal instruction.
+"""
+from __future__ import annotations
+
+import argparse
+from datetime import date, datetime, timezone
+import json
+import os
+from pathlib import Path
+import re
+import secrets
+import shlex
+import signal
+import subprocess
+import sys
+
+VERSION = "1.0.1"
+ROOT = Path(__file__).resolve().parents[2]
+INVENTORY = Path("~/Work/Aureus/local/websec.local.json")
+OUTPUT = Path("~/Work/Aureus/.agent-mail/attachments/zap")
+IMAGE = "zaproxy/zap-stable:2.17.0"
+REPOSITORY = IMAGE.rsplit(":", 1)[0]
+
+PACKAGED_LAUNCHER = r'''
+import os, runpy, shlex, sys
+os.umask(0o077)
+script, arguments = sys.argv[1], sys.argv[2:]
+if script not in ('zap-baseline.py', 'zap-api-scan.py', 'zap-full-scan.py'):
+    raise RuntimeError('Unsupported packaged scanner')
+if '--autooff' not in arguments:
+    raise RuntimeError('Automation Framework must be explicitly disabled')
+options = shlex.split(arguments[arguments.index('-z') + 1])
+if '-silent' not in options or any(x.startswith('-addon') for x in options):
+    raise RuntimeError('Silent mode is required and add-on changes are forbidden')
+# Only baseline 2.17.0 accepts --autooff. API/full have no AF execution path.
+# Consume the common launcher flag for those pinned packaged scripts.
+if script != 'zap-baseline.py':
+    arguments.remove('--autooff')
+sys.argv = [script] + arguments
+if '/zap' not in sys.path: sys.path.insert(0, '/zap')
+runpy.run_path('/zap/' + script, run_name='__main__')
+'''
+
+
+class Usage(ValueError):
+    pass
+
+
+class Parser(argparse.ArgumentParser):
+    def error(self, message):
+        raise Usage(message + "; valid flags: " + ", ".join(self._option_string_actions))
+
+
+def emit(**fields):
+    for key, value in fields.items():
+        print(f"{key}: {json.dumps(value, ensure_ascii=False)}")
+
+
+def docker(args, timeout=30):
+    env = {k: os.environ[k] for k in ("PATH", "HOME", "TMPDIR") if k in os.environ}
+    env["DOCKER_HOST"] = "unix:///var/run/docker.sock"
+    return subprocess.run(["docker"] + args, capture_output=True, timeout=timeout, env=env)
+
+
+def append_console(out, stdout=None, stderr=None, label="packaged scanner"):
+    def text(value):
+        return value.decode("utf-8", errors="replace") if isinstance(value, bytes) else value or ""
+    with (out / "console.log").open("a") as stream:
+        stream.write("\n[" + label + " stdout]\n" + text(stdout))
+        stream.write("\n[" + label + " stderr]\n" + text(stderr) + "\n")
+
+
+def cleanup_owned(name, token, out):
+    probe = docker(["inspect", "--format", "{{json .Config.Labels}}|{{json .Id}}", name])
+    if probe.returncode:
+        raise RuntimeError("cannot verify own container cleanup; operator must check " + name)
+    labels, id = [json.loads(x) for x in probe.stdout.decode().strip().split("|")]
+    if (not isinstance(labels, dict) or labels.get("org.iac.secscan") != token
+            or not re.fullmatch(r"[0-9a-f]{64}", id)):
+        raise RuntimeError("container cleanup ownership mismatch; unrelated containers were left untouched")
+    try:
+        # Stop only the verified owned container, flushing its application log
+        # before copying it. This also ends a scanner left running on timeout.
+        stopped = docker(["stop", "--time", "10", id])
+        if stopped.returncode:
+            append_console(out, stopped.stdout, stopped.stderr, "owned-container stop")
+        logged = docker(["logs", id])
+        append_console(out, logged.stdout, logged.stderr, "container")
+        copied = False
+        # -dir selects the first path; retain compatibility with the image's
+        # original home too. Both are inside the same verified owned container.
+        for source in ("/tmp/iac-zap/zap.log", "/home/zap/.ZAP/zap.log"):
+            result = docker(["cp", id + ":" + source, str(out / "zap.log")])
+            if result.returncode == 0:
+                p = out / "zap.log"
+                if p.is_file() and not p.is_symlink() and p.stat().st_size <= 64 * 1024**2:
+                    os.chmod(p, 0o600)
+                    copied = True
+                    break
+            append_console(out, result.stdout, result.stderr, "zap.log capture")
+        if not copied:
+            raise RuntimeError("ZAP application log capture failed; console retained at " + str(out))
+    finally:
+        if docker(["rm", "-f", id]).returncode:
+            raise RuntimeError("own container cleanup failed; operator must remove " + name)
+
+
+def host_name(value):
+    if not isinstance(value, str) or not re.fullmatch(
+            r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}", value):
+        raise Usage("host must be a lowercase DNS name without URL, port, credentials or path")
+    return value
+
+
+def valid_path(value):
+    return (isinstance(value, str) and value.startswith("/") and not value.startswith("//")
+            and "#" not in value and "\\" not in value
+            and all(33 <= ord(c) <= 126 for c in value))
+
+
+def inventory_entry(path, host, policy_path=None, policy_required=False):
+    inventory = json.loads(path.read_text())
+    if not isinstance(inventory, dict) or not isinstance(inventory.get("web_hosts"), list):
+        raise Usage("inventory requires web_hosts array from rule 41")
+    seen, match = set(), None
+    for row in inventory["web_hosts"]:
+        if not isinstance(row, dict):
+            raise Usage("invalid web_hosts entry")
+        name = host_name(row.get("host"))
+        if name in seen:
+            raise Usage("duplicate inventory host; resolve it before scanning")
+        seen.add(name)
+        paths = row.get("paths", ["/"])
+        if not isinstance(paths, list) or not paths or not all(valid_path(p) for p in paths):
+            raise Usage("inventory paths must be nonempty absolute ASCII URL paths")
+        if "active_scan_allowed" in row and type(row["active_scan_allowed"]) is not bool:
+            raise Usage("active_scan_allowed must be a JSON boolean")
+        if name == host:
+            match = dict(row, paths=list(dict.fromkeys(paths)))
+    if match is None:
+        raise Usage("off-inventory host refused; route inventory changes through its owner")
+    if policy_path and (policy_required or policy_path.exists()):
+        policy = json.loads(policy_path.read_text())
+        if not isinstance(policy, dict) or set(policy) != {"web_hosts"} or not isinstance(policy["web_hosts"], list):
+            raise Usage("scan policy requires only a web_hosts array of host/active_scan_allowed/zap_rules")
+        policy_seen = set()
+        for row in policy["web_hosts"]:
+            if not isinstance(row, dict) or set(row) - {"host", "active_scan_allowed", "zap_rules"}:
+                raise Usage("scan policy may add permissions/rules only; hosts and paths belong to the base inventory")
+            name = host_name(row.get("host"))
+            if name not in seen or name in policy_seen:
+                raise Usage("scan policy has an off-inventory or duplicate host")
+            policy_seen.add(name)
+            if "active_scan_allowed" in row and type(row["active_scan_allowed"]) is not bool:
+                raise Usage("active_scan_allowed must be a JSON boolean")
+            rules_config(row.get("zap_rules", {}))
+            if name == host:
+                for key in ("active_scan_allowed", "zap_rules"):
+                    if key in row:
+                        if key in match:
+                            raise Usage("duplicate scan metadata across base inventory and overlay; use one source")
+                        match[key] = row[key]
+    return match
+
+
+def rules_config(rules):
+    if not isinstance(rules, dict):
+        raise Usage("zap_rules must map numeric rule IDs to action, reason, expires")
+    lines = ["# Generated from reviewed inventory; raw reports retain alert evidence."]
+    for id, row in sorted(rules.items()):
+        if (not re.fullmatch(r"[0-9]{1,10}", id) or not isinstance(row, dict)
+                or set(row) != {"action", "reason", "expires"}
+                or row["action"] not in ("FAIL", "WARN", "IGNORE")
+                or not isinstance(row["reason"], str) or not row["reason"].strip()
+                or any(ord(c) < 32 for c in row["reason"])
+                or not isinstance(row["expires"], str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", row["expires"])):
+            raise Usage("zap_rules need numeric ID, FAIL/WARN/IGNORE, nonempty single-line reason and expires YYYY-MM-DD")
+        if date.fromisoformat(row["expires"]) < datetime.now(timezone.utc).date():
+            raise Usage("expired ZAP rule exception; remove it or obtain its owner's renewal")
+        lines.append(f"{id}\t{row['action']}\t{row['reason']} (expires {row['expires']})")
+    return "\n".join(lines) + "\n"
+
+
+def exclusion_regex(host):
+    # Exclude all requests except HTTPS to exactly this inventory host on 443.
+    return r"(?is)^(?!https://" + re.escape(host) + r"(?::443)?(?:/|$)).*$"
+
+
+OPENAPI_GUARD = r'''
+def safe_openapi(document):
+    if not isinstance(document, dict) or not ("openapi" in document or document.get("swagger") == "2.0"):
+        raise RuntimeError('Expected an OpenAPI/Swagger document')
+    def walk(node):
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key in ('$ref', '$dynamicRef') and (not isinstance(value, str) or not value.startswith('#')):
+                    raise RuntimeError('External OpenAPI references are forbidden')
+                if key == 'servers':
+                    # Override root, path and operation servers before any import.
+                    node[key] = [{'url': ORIGIN}]
+                else:
+                    walk(value)
+        elif isinstance(node, list):
+            for value in node: walk(value)
+    walk(document)
+    if 'openapi' in document:
+        document['servers'] = [{'url': ORIGIN}]
+    else:
+        document['host'] = HOST
+        document['schemes'] = ['https']
+    return document
+
+def import_inventory_openapi(zap, target, override):
+    if target not in [ORIGIN + path for path in PATHS]:
+        raise RuntimeError('OpenAPI target is not an inventory path')
+    messages = zap.core.access_url(target, followredirects=False)
+    if not isinstance(messages, list) or len(messages) != 1:
+        raise RuntimeError('OpenAPI fetch did not return one response')
+    message = messages[0]
+    header_lines = message.get('responseHeader', '').splitlines()
+    status = header_lines[0].split() if header_lines else []
+    if len(status) < 2 or status[1] != '200':
+        raise RuntimeError('OpenAPI redirects/errors are forbidden')
+    body = message.get('responseBody', '')
+    if not isinstance(body, str) or len(body.encode()) > 8 * 1024 * 1024:
+        raise RuntimeError('OpenAPI document missing or too large')
+    try:
+        document = json.loads(body)
+    except ValueError:
+        import yaml
+        document = yaml.safe_load(body)
+    document = safe_openapi(document)
+    # Import only the checked local copy, eliminating remote-reference refetches.
+    filename = '/tmp/iac-openapi.json'
+    with open(filename, 'w') as stream:
+        os.chmod(filename, 0o600)
+        json.dump(document, stream)
+    return zap.openapi.import_file(filename, ORIGIN)
+'''
+
+
+def make_hook(host, paths, rate, mode="baseline"):
+    """Original hooks for the packaged scripts; fail closed before target access."""
+    include = r"https://" + re.escape(host) + r"(?::443)?/.*"
+    return f'''# Generated by IAC zap-scan; original code, not upstream source.
+import json
+import os
+from pathlib import Path
+import shutil
+import zap_common
+HOST = {host!r}
+ORIGIN = 'https://' + HOST
+PATHS = {paths!r}
+MODE = {mode!r}
+
+def cli_opts(opts):
+    if MODE == 'api':
+        destination = Path('/tmp/iac-zap/policies')
+        destination.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile('/home/zap/.ZAP/policies/API-Minimal.policy', destination / 'API-Minimal.policy')
+    return opts
+
+def require_ok(result):
+    if result != 'OK':
+        raise RuntimeError('Required ZAP guard was not installed')
+
+def zap_started(zap, target):
+    require_ok(zap.network.add_rate_limit_rule(
+        description='iac-rate', enabled=True, matchregex=True,
+        matchstring={re.escape(host)!r}, requestspersecond={rate}, groupby='rule'))
+    zap_common.context_name = 'iac-inventory'
+    zap_common.context_id = zap.context.new_context(zap_common.context_name)
+    if not str(zap_common.context_id).isdigit():
+        raise RuntimeError('Inventory context could not be created')
+    require_ok(zap.context.include_in_context(zap_common.context_name, {include!r}))
+    require_ok(zap.context.set_context_in_scope(zap_common.context_name, True))
+    require_ok(zap.core.set_mode('protect'))
+    require_ok(zap.spider.exclude_from_scan({exclusion_regex(host)!r}))
+    require_ok(zap.ascan.exclude_from_scan({exclusion_regex(host)!r}))
+    if MODE == 'api':
+        zap.openapi.import_url = lambda target, override: import_inventory_openapi(zap, target, override)
+    # The packaged access step ordinarily follows redirects; seed via Core API
+    # without following them. The scoped spider handles permitted destinations.
+    zap.urlopen = lambda url: json.dumps(zap.core.access_url(url, followredirects=False))
+    for path in {paths!r}:
+        zap.core.access_url('https://' + {host!r} + path, followredirects=False)
+    return zap, target
+
+def zap_tuned(zap):
+    # Run after packaged performance tuning, which may change thread counts.
+    require_ok(zap.spider.set_option_thread_count(1))
+    require_ok(zap.spider.set_option_post_form(False))
+    require_ok(zap.spider.set_option_process_form(False))
+    require_ok(zap.ascan.set_option_thread_per_host(1))
+    require_ok(zap.ascan.set_option_delay_in_ms({1000 // rate}))
+''' + OPENAPI_GUARD
+
+
+def private_write(path, data):
+    with path.open("x") as stream:
+        os.chmod(path, 0o600)
+        stream.write(data)
+
+
+def run_scan(args):
+    host = host_name(args.host)
+    policy_path = args.scan_policy or args.inventory.with_name("websec-scans.local.json")
+    entry = inventory_entry(args.inventory, host, policy_path, args.scan_policy is not None)
+    rules = rules_config(entry.get("zap_rules", {}))
+    if args.path and args.path not in entry["paths"]:
+        raise Usage("--path must exactly match an inventory path")
+    if args.mode != "baseline":
+        if entry.get("active_scan_allowed") is not True or not args.ramesh_instruction or not args.ramesh_instruction.strip():
+            raise Usage("active scan requires active_scan_allowed: true AND --ramesh-instruction containing Ramesh's literal authorization")
+    elif args.ramesh_instruction:
+        raise Usage("--ramesh-instruction is for explicitly selected api/full mode")
+    if args.mode == "api" and args.api_path not in entry["paths"]:
+        raise Usage("api mode requires --api-path exactly matching an inventoried OpenAPI document path")
+    if args.api_path and args.mode != "api":
+        raise Usage("--api-path requires --mode api")
+    if not 1 <= args.requests_per_second <= 2:
+        raise Usage("--requests-per-second must be 1 or 2 (default 1)")
+    if not 1 <= args.minutes <= 5:
+        raise Usage("--minutes must be 1..5 (default 1)")
+    raw = docker(["image", "inspect", "--format", "{{json .RepoDigests}}", IMAGE])
+    if raw.returncode:
+        raise RuntimeError("local pinned image missing; operator must approve and pull version 2.17.0 first")
+    digests = json.loads(raw.stdout)
+    images = [d for d in digests or [] if re.fullmatch(re.escape(REPOSITORY) + r"@sha256:[0-9a-f]{64}", d)]
+    if not images:
+        raise RuntimeError("versioned local image has no repository digest")
+    image = images[0]
+    now = datetime.now(timezone.utc)
+    out = args.output_root.resolve() / host / now.strftime("%Y-%m-%d") / (now.strftime("%H%M%S") + "-" + secrets.token_hex(6))
+    out.mkdir(parents=True, mode=0o700)
+    private_write(out / "rules.conf", rules)
+    private_write(out / "iac_hook.py", make_hook(host, entry["paths"], args.requests_per_second, args.mode))
+    # Run as the host owner so the narrow writable mount never needs chmod 777.
+    options = ["-silent", "-dir", "/tmp/iac-zap", "-config", "spider.maxDuration=" + str(args.minutes),
+               "-config", "network.globalExclusions.exclusions.exclusion(0).name=IAC-inventory-guard",
+               "-config", "network.globalExclusions.exclusions.exclusion(0).value=" + exclusion_regex(host),
+               "-config", "network.globalExclusions.exclusions.exclusion(0).enabled=true"]
+    name = "iac-zap-" + secrets.token_hex(12)
+    token = secrets.token_hex(24)
+    script = {"baseline": "zap-baseline.py", "api": "zap-api-scan.py", "full": "zap-full-scan.py"}[args.mode]
+    target = "https://" + host + (args.api_path if args.mode == "api" else args.path or entry["paths"][0])
+    command = ["run", "--pull=never", "--name", name, "--label", "org.iac.secscan=" + token,
+               "--log-driver=local", "--log-opt", "max-size=10m", "--log-opt", "max-file=2", "--cap-drop=ALL",
+               "--security-opt", "no-new-privileges", "--user", f"{os.getuid()}:{os.getgid()}",
+               "-e", "HOME=/tmp", "--workdir", "/zap/wrk", "-v", str(out) + ":/zap/wrk:rw", image,
+               "python3", "-c", PACKAGED_LAUNCHER, script,
+               "-t", target, "-c", "rules.conf", "-r", "report.html", "-J", "report.json",
+               "--hook", "/zap/wrk/iac_hook.py", "-T", "10", "--autooff", "-z", shlex.join(options)]
+    if args.mode == "baseline":
+        command += ["-m", str(args.minutes)]
+    elif args.mode == "api":
+        command += ["-f", "openapi", "-O", "https://" + host]
+    else:
+        command += ["-m", str(args.minutes)]
+    private_write(out / "console.log", "")
+    result = None
+    try:
+        result = docker(command, timeout=1800)
+    except subprocess.TimeoutExpired as exc:
+        append_console(out, exc.output, exc.stderr, "timed-out packaged scanner")
+        raise
+    except (OSError, KeyboardInterrupt) as exc:
+        append_console(out, stderr=type(exc).__name__, label="scanner interrupted")
+        raise
+    finally:
+        if result is not None:
+            append_console(out, result.stdout, result.stderr)
+        try:
+            cleanup_owned(name, token, out)
+        finally:
+            emit(evidence=str(out))
+    if result.returncode not in (0, 1, 2):
+        raise RuntimeError("upstream scan failed or timed out; incomplete reports cannot pass")
+    for file in ("report.html", "report.json"):
+        p = out / file
+        if p.is_symlink() or not p.is_file() or not 0 < p.stat().st_size <= 64 * 1024**2:
+            raise RuntimeError("required HTML/JSON report missing or invalid; scan incomplete")
+        os.chmod(p, 0o600)
+    report = json.loads((out / "report.json").read_text())
+    if not isinstance(report, dict) or not isinstance(report.get("site"), list) or not report["site"]:
+        raise RuntimeError("ZAP report contains no site evidence; scan incomplete")
+    alerts = []
+    for site in report["site"]:
+        if not isinstance(site, dict) or not isinstance(site.get("alerts"), list):
+            raise RuntimeError("invalid ZAP alerts report; scan incomplete")
+        if (site.get("@host") != host or str(site.get("@port")) != "443"
+                or str(site.get("@ssl")).lower() != "true"
+                or site.get("@name") not in ("https://" + host, "https://" + host + ":443")):
+            raise RuntimeError("ZAP report target differs from the inventory host; scan cannot pass")
+        alerts += site["alerts"]
+    summary = dict(host=host, mode=args.mode, completed_at=datetime.now(timezone.utc).isoformat(),
+                   image=image, upstream_exit=result.returncode, status="pass" if result.returncode == 0 else "review-required",
+                   requests_per_second=args.requests_per_second, paths=entry["paths"],
+                   scan_policy=str(policy_path.resolve()) if policy_path.exists() else None,
+                   active_scan_allowed=entry.get("active_scan_allowed", False),
+                   ramesh_instruction=args.ramesh_instruction, rules=entry.get("zap_rules", {}),
+                   alerts=len(alerts), high=sum(str(a.get("riskcode")) == "3" for a in alerts),
+                   medium=sum(str(a.get("riskcode")) == "2" for a in alerts))
+    private_write(out / "summary.json", json.dumps(summary, indent=2))
+    emit(status=summary["status"], alerts=len(alerts), high=summary["high"], medium=summary["medium"], reports=str(out))
+    return 0 if result.returncode == 0 else 1
+
+
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    if argv in (["-v"], ["-V"], ["--version"]):
+        print(VERSION)
+        return 0
+    p = Parser(description=__doc__, epilog="Examples: zap-scan example.com; zap-scan example.com --mode full --ramesh-instruction '<literal instruction>'")
+    p.add_argument("host")
+    p.add_argument("--inventory", type=Path, default=INVENTORY)
+    p.add_argument("--scan-policy", type=Path, help="optional per-host permissions/rules overlay; default websec-scans.local.json beside inventory")
+    p.add_argument("--output-root", type=Path, default=OUTPUT)
+    p.add_argument("--mode", choices=("baseline", "api", "full"), default="baseline")
+    p.add_argument("--path")
+    p.add_argument("--api-path")
+    p.add_argument("--ramesh-instruction")
+    p.add_argument("--requests-per-second", type=int, default=1)
+    p.add_argument("--minutes", type=int, default=1)
+    if not argv:
+        emit(bin=str(Path(__file__).resolve()), description="Inventory-only passive ZAP baseline gate", status="idle",
+             help="zap-scan <inventory-host> [--path <inventory-path>]")
+        return 0
+    old = signal.getsignal(signal.SIGTERM)
+    try:
+        signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
+        return run_scan(p.parse_args(argv))
+    except SystemExit as exc:
+        return int(exc.code)
+    except (Usage, FileNotFoundError, ValueError, TypeError) as exc:
+        emit(error=str(exc), help="zap-scan <inventory-host> [--path <inventory-path>]")
+        return 2
+    except RuntimeError as exc:
+        emit(error=str(exc) + "; no clean result", help="zap-scan <inventory-host>")
+        return 1
+    except (OSError, subprocess.SubprocessError, KeyboardInterrupt):
+        emit(error="scan failed or incomplete; no clean result", help="Check the local image, inventory and report folder; rerun zap-scan <inventory-host>")
+        return 1
+    finally:
+        signal.signal(signal.SIGTERM, old)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
