@@ -6,6 +6,7 @@ import io
 import json
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -49,6 +50,9 @@ class ZAPTests(unittest.TestCase):
             (wrk / "report.html").write_text("<html>report</html>")
             (wrk / "report.json").write_text(json.dumps({"site": [{"@name": "https://example.com", "@host": "example.com", "@port": "443", "@ssl": "true", "alerts": []}]}))
             return subprocess.CompletedProcess(args, self.upstream_code, b"private upstream log", b"")
+        if args[1] == "cp":
+            Path(args[-1]).write_text("fixture ZAP application log\n")
+            return subprocess.CompletedProcess(args, 0, b"", b"")
         return subprocess.CompletedProcess(args, 0, b"", b"")
 
     def invoke(self, args=None, runner=None):
@@ -63,6 +67,7 @@ class ZAPTests(unittest.TestCase):
         run = next(a for a, _ in self.calls if a[1] == "run")
         self.assertIn(DIGEST, run)
         self.assertIn("--pull=never", run)
+        self.assertEqual(run[run.index("--workdir") + 1], "/zap/wrk")
         self.assertIn("zap-baseline.py", run)
         self.assertIn("--autooff", run)
         self.assertIn("-silent", run[run.index("-z") + 1])
@@ -71,6 +76,96 @@ class ZAPTests(unittest.TestCase):
         summaries = list((self.root / "reports/example.com").rglob("summary.json"))
         self.assertEqual(len(summaries), 1)
         self.assertEqual(json.loads(summaries[0].read_text())["mode"], "baseline")
+
+    def test_every_mode_builds_explicit_silent_and_autooff(self):
+        self.entry["active_scan_allowed"] = True
+        self.save()
+        for mode in ("baseline", "api", "full"):
+            with self.subTest(mode=mode):
+                args = self.args + ["--mode", mode]
+                if mode != "baseline":
+                    args += ["--ramesh-instruction", "Run this scan on example.com"]
+                if mode == "api":
+                    args += ["--api-path", "/openapi.json"]
+                self.assertEqual(self.invoke(args)[0], 0)
+                run = next(a for a, _ in reversed(self.calls) if a[1] == "run")
+                self.assertIn("--autooff", run)
+                options = shlex.split(run[run.index("-z") + 1])
+                self.assertIn("-silent", options)
+                self.assertFalse(set(options) & {"-addonupdate", "-addoninstall", "-autoupdate"})
+
+    def test_launcher_preserves_silent_and_translates_autooff_for_pinned_scripts(self):
+        for script in ("zap-baseline.py", "zap-api-scan.py", "zap-full-scan.py"):
+            with self.subTest(script=script), patch.object(sys, "argv", ["launcher", script, "-t", "https://example.com/", "--autooff", "-z", "-silent"]), patch("runpy.run_path") as run:
+                exec(z.PACKAGED_LAUNCHER, {})
+                passed = sys.argv[:]
+                self.assertEqual(passed[0], script)
+                self.assertIn("-silent", passed)
+                self.assertEqual("--autooff" in passed, script == "zap-baseline.py")
+                run.assert_called_once_with("/zap/" + script, run_name="__main__")
+
+    def test_failure_retains_console_and_zap_log_before_removal(self):
+        self.upstream_code = 3
+        code, out = self.invoke()
+        self.assertEqual(code, 1)
+        folder = next((self.root / "reports").rglob("iac_hook.py")).parent
+        self.assertIn("private upstream log", (folder / "console.log").read_text())
+        self.assertIn("fixture ZAP application log", (folder / "zap.log").read_text())
+        self.assertEqual((folder / "console.log").stat().st_mode & 0o777, 0o600)
+        self.assertEqual((folder / "zap.log").stat().st_mode & 0o777, 0o600)
+        self.assertNotIn("private upstream log", out)
+        commands = [a[1] for a, _ in self.calls]
+        self.assertLess(commands.index("cp"), commands.index("rm"))
+
+    def test_timeout_retains_partial_console_and_zap_log_and_fails(self):
+        def timeout(args, **kw):
+            if args[1] == "run":
+                self.calls.append((args, kw))
+                raise subprocess.TimeoutExpired(args, 1800, output=b"partial scanner output", stderr=b"partial scanner diagnostic")
+            return self.docker(args, **kw)
+        self.assertEqual(self.invoke(runner=timeout)[0], 1)
+        folder = next((self.root / "reports").rglob("iac_hook.py")).parent
+        self.assertIn("partial scanner output", (folder / "console.log").read_text())
+        self.assertIn("partial scanner diagnostic", (folder / "console.log").read_text())
+        self.assertIn("fixture ZAP application log", (folder / "zap.log").read_text())
+        self.assertFalse((folder / "summary.json").exists())
+        self.assertEqual(self.calls[-1][0][1:3], ["rm", "-f"])
+
+    def test_image_home_log_fallback_is_copied_before_removal(self):
+        def legacy(args, **kw):
+            if args[1] == "cp" and ":/tmp/iac-zap/zap.log" in args[-2]:
+                self.calls.append((args, kw))
+                return subprocess.CompletedProcess(args, 1, b"", b"not at configured path")
+            return self.docker(args, **kw)
+        self.upstream_code = 3
+        self.assertEqual(self.invoke(runner=legacy)[0], 1)
+        copies = [a for a, _ in self.calls if a[1] == "cp"]
+        self.assertEqual(len(copies), 2)
+        self.assertTrue(copies[-1][-2].endswith(":/home/zap/.ZAP/zap.log"))
+        self.assertIn("fixture ZAP application log", next((self.root / "reports").rglob("zap.log")).read_text())
+        self.assertEqual(self.calls[-1][0][1:3], ["rm", "-f"])
+
+    def test_interruption_retains_container_console_and_application_log(self):
+        def interrupted(args, **kw):
+            if args[1] == "run":
+                self.calls.append((args, kw))
+                raise KeyboardInterrupt()
+            if args[1] == "logs":
+                self.calls.append((args, kw))
+                return subprocess.CompletedProcess(args, 0, b"recovered container output", b"")
+            return self.docker(args, **kw)
+        self.assertEqual(self.invoke(runner=interrupted)[0], 1)
+        folder = next((self.root / "reports").rglob("iac_hook.py")).parent
+        self.assertIn("recovered container output", (folder / "console.log").read_text())
+        self.assertIn("fixture ZAP application log", (folder / "zap.log").read_text())
+        self.assertEqual(self.calls[-1][0][1:3], ["rm", "-f"])
+
+    def test_launcher_refuses_missing_silent_or_autooff_before_upstream(self):
+        for args in (["--autooff", "-z", "-config foo=bar"], ["-z", "-silent"]):
+            with self.subTest(args=args), patch.object(sys, "argv", ["launcher", "zap-baseline.py"] + args), patch("runpy.run_path") as run:
+                with self.assertRaises(RuntimeError):
+                    exec(z.PACKAGED_LAUNCHER, {})
+                run.assert_not_called()
 
     def test_off_inventory_and_url_inputs_refused_before_docker(self):
         for host in ("evil.example", "example.com.evil.test", "https://example.com", "example.com:443",
@@ -205,6 +300,9 @@ class ZAPTests(unittest.TestCase):
                 return subprocess.CompletedProcess(args, 0, b"", b"")
             return self.docker(args, **kw)
         self.assertEqual(self.invoke(runner=missing)[0], 1)
+        folder = next((self.root / "reports").rglob("iac_hook.py")).parent
+        self.assertTrue((folder / "console.log").is_file())
+        self.assertTrue((folder / "zap.log").is_file())
 
     def test_unknown_flags_and_unlisted_paths_precede_docker(self):
         for args in (self.args + ["--typo"], self.args + ["--path", "/not-listed"],
@@ -295,6 +393,7 @@ elif a[0] == 'run':
     (wrk/'report.html').write_text('<html>fixture</html>')
     (wrk/'report.json').write_text(json.dumps({'site':[{'@host':'example.com','@name':'https://example.com','@port':'443','@ssl':'true','alerts':[]}]}))
 elif a[0] == 'inspect': print(json.dumps({'org.iac.secscan':pathlib.Path(__file__).with_suffix('.token').read_text()}) + '|' + json.dumps('d'*64))
+elif a[0] == 'cp': pathlib.Path(a[-1]).write_text('fixture ZAP application log')
 '''.replace('__DIGEST__', repr(DIGEST)))
         fake.chmod(0o700)
         env = {"PATH": str(self.root) + ":/usr/bin:/bin", "HOME": str(self.root),
@@ -302,7 +401,7 @@ elif a[0] == 'inspect': print(json.dumps({'org.iac.secscan':pathlib.Path(__file_
         result = subprocess.run([sys.executable, str(TOOL)] + self.args, env=env, capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         calls = [json.loads(line) for line in fake.with_suffix('.calls').read_text().splitlines()]
-        self.assertEqual(len(calls), 4)
+        self.assertEqual(len(calls), 7)
         self.assertTrue(all(c["daemon"] == "unix:///var/run/docker.sock" and c["context"] is None for c in calls))
         self.assertEqual(calls[-1]["args"], ["rm", "-f", "d" * 64])
 

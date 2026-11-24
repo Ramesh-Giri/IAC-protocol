@@ -18,12 +18,32 @@ import signal
 import subprocess
 import sys
 
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 ROOT = Path(__file__).resolve().parents[2]
 INVENTORY = Path("~/Work/Aureus/local/websec.local.json")
 OUTPUT = Path("~/Work/Aureus/.agent-mail/attachments/zap")
 IMAGE = "zaproxy/zap-stable:2.17.0"
 REPOSITORY = IMAGE.rsplit(":", 1)[0]
+
+PACKAGED_LAUNCHER = r'''
+import os, runpy, shlex, sys
+os.umask(0o077)
+script, arguments = sys.argv[1], sys.argv[2:]
+if script not in ('zap-baseline.py', 'zap-api-scan.py', 'zap-full-scan.py'):
+    raise RuntimeError('Unsupported packaged scanner')
+if '--autooff' not in arguments:
+    raise RuntimeError('Automation Framework must be explicitly disabled')
+options = shlex.split(arguments[arguments.index('-z') + 1])
+if '-silent' not in options or any(x.startswith('-addon') for x in options):
+    raise RuntimeError('Silent mode is required and add-on changes are forbidden')
+# Only baseline 2.17.0 accepts --autooff. API/full have no AF execution path.
+# Consume the common launcher flag for those pinned packaged scripts.
+if script != 'zap-baseline.py':
+    arguments.remove('--autooff')
+sys.argv = [script] + arguments
+if '/zap' not in sys.path: sys.path.insert(0, '/zap')
+runpy.run_path('/zap/' + script, run_name='__main__')
+'''
 
 
 class Usage(ValueError):
@@ -46,7 +66,15 @@ def docker(args, timeout=30):
     return subprocess.run(["docker"] + args, capture_output=True, timeout=timeout, env=env)
 
 
-def cleanup_owned(name, token):
+def append_console(out, stdout=None, stderr=None, label="packaged scanner"):
+    def text(value):
+        return value.decode("utf-8", errors="replace") if isinstance(value, bytes) else value or ""
+    with (out / "console.log").open("a") as stream:
+        stream.write("\n[" + label + " stdout]\n" + text(stdout))
+        stream.write("\n[" + label + " stderr]\n" + text(stderr) + "\n")
+
+
+def cleanup_owned(name, token, out):
     probe = docker(["inspect", "--format", "{{json .Config.Labels}}|{{json .Id}}", name])
     if probe.returncode:
         raise RuntimeError("cannot verify own container cleanup; operator must check " + name)
@@ -54,8 +82,31 @@ def cleanup_owned(name, token):
     if (not isinstance(labels, dict) or labels.get("org.iac.secscan") != token
             or not re.fullmatch(r"[0-9a-f]{64}", id)):
         raise RuntimeError("container cleanup ownership mismatch; unrelated containers were left untouched")
-    if docker(["rm", "-f", id]).returncode:
-        raise RuntimeError("own container cleanup failed; operator must remove " + name)
+    try:
+        # Stop only the verified owned container, flushing its application log
+        # before copying it. This also ends a scanner left running on timeout.
+        stopped = docker(["stop", "--time", "10", id])
+        if stopped.returncode:
+            append_console(out, stopped.stdout, stopped.stderr, "owned-container stop")
+        logged = docker(["logs", id])
+        append_console(out, logged.stdout, logged.stderr, "container")
+        copied = False
+        # -dir selects the first path; retain compatibility with the image's
+        # original home too. Both are inside the same verified owned container.
+        for source in ("/tmp/iac-zap/zap.log", "/home/zap/.ZAP/zap.log"):
+            result = docker(["cp", id + ":" + source, str(out / "zap.log")])
+            if result.returncode == 0:
+                p = out / "zap.log"
+                if p.is_file() and not p.is_symlink() and p.stat().st_size <= 64 * 1024**2:
+                    os.chmod(p, 0o600)
+                    copied = True
+                    break
+            append_console(out, result.stdout, result.stderr, "zap.log capture")
+        if not copied:
+            raise RuntimeError("ZAP application log capture failed; console retained at " + str(out))
+    finally:
+        if docker(["rm", "-f", id]).returncode:
+            raise RuntimeError("own container cleanup failed; operator must remove " + name)
 
 
 def host_name(value):
@@ -298,21 +349,35 @@ def run_scan(args):
     script = {"baseline": "zap-baseline.py", "api": "zap-api-scan.py", "full": "zap-full-scan.py"}[args.mode]
     target = "https://" + host + (args.api_path if args.mode == "api" else args.path or entry["paths"][0])
     command = ["run", "--pull=never", "--name", name, "--label", "org.iac.secscan=" + token,
-               "--log-driver=none", "--cap-drop=ALL",
+               "--log-driver=local", "--log-opt", "max-size=10m", "--log-opt", "max-file=2", "--cap-drop=ALL",
                "--security-opt", "no-new-privileges", "--user", f"{os.getuid()}:{os.getgid()}",
-               "-e", "HOME=/tmp", "-v", str(out) + ":/zap/wrk:rw", image, script,
+               "-e", "HOME=/tmp", "--workdir", "/zap/wrk", "-v", str(out) + ":/zap/wrk:rw", image,
+               "python3", "-c", PACKAGED_LAUNCHER, script,
                "-t", target, "-c", "rules.conf", "-r", "report.html", "-J", "report.json",
-               "--hook", "/zap/wrk/iac_hook.py", "-T", "10", "-z", shlex.join(options)]
+               "--hook", "/zap/wrk/iac_hook.py", "-T", "10", "--autooff", "-z", shlex.join(options)]
     if args.mode == "baseline":
-        command += ["--autooff", "-m", str(args.minutes)]
+        command += ["-m", str(args.minutes)]
     elif args.mode == "api":
         command += ["-f", "openapi", "-O", "https://" + host]
     else:
         command += ["-m", str(args.minutes)]
+    private_write(out / "console.log", "")
+    result = None
     try:
         result = docker(command, timeout=1800)
+    except subprocess.TimeoutExpired as exc:
+        append_console(out, exc.output, exc.stderr, "timed-out packaged scanner")
+        raise
+    except (OSError, KeyboardInterrupt) as exc:
+        append_console(out, stderr=type(exc).__name__, label="scanner interrupted")
+        raise
     finally:
-        cleanup_owned(name, token)
+        if result is not None:
+            append_console(out, result.stdout, result.stderr)
+        try:
+            cleanup_owned(name, token, out)
+        finally:
+            emit(evidence=str(out))
     if result.returncode not in (0, 1, 2):
         raise RuntimeError("upstream scan failed or timed out; incomplete reports cannot pass")
     for file in ("report.html", "report.json"):
