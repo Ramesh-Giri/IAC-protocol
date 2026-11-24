@@ -7,6 +7,9 @@ description: Write a SafeLine WAF fit and rollback plan for human approval, dist
 
 Apply rule 63. Produce a plan with evidence, named owner and rollback for Ramesh's approval. Product requirements and technical implementation retain their separate owners. This skill does not authorize a VM command, image download, DNS/firewall change, certificate transfer, installation or WAF configuration change. Ramesh performs VM operations himself through his existing console workflow; never invoke cloud CLIs, SDKs, remote shell, or a browser console on his behalf.
 
+Record the fit decision, operator and deployment/rollback runbooks in the project's [security-privacy-baseline](../security-privacy-baseline/SKILL.md) under rule 64.
+A WAF plan or installation does not replace application fixes or satisfy unrelated checklist rows.
+
 ## Current hosting decision
 
 | Workload | Fit | Protection decision |

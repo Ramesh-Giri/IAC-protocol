@@ -18,6 +18,7 @@ The descriptions identify when to load each skill.
 | [mobile-app-scan](mobile-app-scan/SKILL.md) | Gate Android store uploads on local JSON/PDF evidence and reviewed findings; wrapper: `bin/mobsf-scan`. | [MobSF v4.6.9](https://github.com/MobSF/Mobile-Security-Framework-MobSF/tree/v4.6.9), GPL-3.0-only, separate Docker program |
 | [web-dast-scan](web-dast-scan/SKILL.md) | Run inventory-only ZAP baselines weekly/after deploys; require both permissions for active modes; wrapper: `bin/zap-scan`. | [ZAP v2.17.0](https://github.com/zaproxy/zaproxy/tree/v2.17.0), Apache-2.0, separate Docker program |
 | [waf-fit](waf-fit/SKILL.md) | Plan SafeLine fit, human-operated pilot and rollback; Ramesh approval required before WAF changes. | [SafeLine v9.4.7](https://github.com/chaitin/SafeLine/tree/v9.4.7), GPL-3.0, plan only |
+| [security-privacy-baseline](security-privacy-baseline/SKILL.md) | Set up every new project's security, privacy and production-readiness checklist, including deploy access; review before first launch, each release and after security reports; turn FAIL rows into owned tasks and report rule-64 blockers. | Original IAC checklist and workflow; official legal starting sources in the template, legal-only decisions require counsel. |
 
 ## Shared seat boundaries
 

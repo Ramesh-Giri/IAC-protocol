@@ -8,6 +8,9 @@ description: Run the local MobSF Android release gate before a store upload, rev
 Apply rule 61 before every store upload. Read the roster and release task first: this skill grants no permission to build, download images, upload to a store, fix application code, or use an online scanner.
 The release owner supplies the artifact; on Ramesh's site only the overseer schedules the heavy build.
 
+Link the release scan and reviewed findings to the project's [security-privacy-baseline](../security-privacy-baseline/SKILL.md) under rule 64.
+Also verify legacy-crypto removal, Firebase/Google key restrictions and named trackers in the privacy policy; MobSF alone does not close those rows or the full checklist.
+
 ## Run and review
 
 1. Record the release commit, package, build name/number, and APK/AAB SHA-256 in the release evidence. Prefer the **release APK from the same commit, flavor, defines, signing setup and version as the store AAB**. A dev APK is supplementary evidence, not the release gate.
