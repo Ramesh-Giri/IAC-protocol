@@ -1,0 +1,15 @@
+{
+  "web_hosts": [
+    {
+      "host": "example.com",
+      "active_scan_allowed": false,
+      "zap_rules": {
+        "10020": {
+          "action": "IGNORE",
+          "reason": "Example only: replace with an owner's specific accepted condition and task reference",
+          "expires": "2026-12-15"
+        }
+      }
+    }
+  ]
+}

@@ -1,8 +1,9 @@
 <!-- Indexes original IAC workflow skills, their shared authority limits and inspected upstream inspiration. -->
 # IAC skills
 
-These are original repository-local instructions for IAC and app work, written after source review on 2026-11-23.
-They are not installed third-party packages, executable helpers, runtime hooks or a permission system.
+These are original repository-local instructions for IAC and app work, written after source review on 2026-11-23 and 2026-11-24.
+They are not installed third-party packages, runtime hooks or a permission system.
+The scanner skills also have separately invoked wrapper programs; those helpers do not add authority.
 Codex and Claude seats can read the relevant `SKILL.md` directly from a task brief; no global registration or installer is required.
 The descriptions identify when to load each skill.
 
@@ -14,6 +15,9 @@ The descriptions identify when to load each skill.
 | [scheduled-loop](scheduled-loop/SKILL.md) | Prepare a charter, outcome check and bounded overnight runner. | [New Loop](https://www.skillsdirectory.com/skills/albertnahas-new-loop) |
 | [test-value-audit](test-value-audit/SKILL.md) | Report weak tests and check sensitivity against the base implementation. | [Audit Tests](https://www.skillsdirectory.com/skills/ku5ic-audit-tests) |
 | [flutter-a11y-audit](flutter-a11y-audit/SKILL.md) | Verify Flutter accessibility alongside app's Material 3 gate. | [Accessibility](https://www.skillsdirectory.com/skills/evanca-accessibility) |
+| [mobile-app-scan](mobile-app-scan/SKILL.md) | Gate Android store uploads on local JSON/PDF evidence and reviewed findings; wrapper: `bin/mobsf-scan`. | [MobSF v4.6.9](https://github.com/MobSF/Mobile-Security-Framework-MobSF/tree/v4.6.9), GPL-3.0-only, separate Docker program |
+| [web-dast-scan](web-dast-scan/SKILL.md) | Run inventory-only ZAP baselines weekly/after deploys; require both permissions for active modes; wrapper: `bin/zap-scan`. | [ZAP v2.17.0](https://github.com/zaproxy/zaproxy/tree/v2.17.0), Apache-2.0, separate Docker program |
+| [waf-fit](waf-fit/SKILL.md) | Plan SafeLine fit, human-operated pilot and rollback; Ramesh approval required before WAF changes. | [SafeLine v9.4.7](https://github.com/chaitin/SafeLine/tree/v9.4.7), GPL-3.0, plan only |
 
 ## Shared seat boundaries
 
@@ -105,3 +109,5 @@ Compatibility risk: browser ARIA/CSS examples and a generic motion flag cannot s
 All six directory pages advertise `npx` installation; none of those commands was executed.
 Risk observations are scoped to the inspected files, not a claim that entire repositories are safe or malicious.
 Research downloads are temporary reading material, not runtime dependencies of these skills.
+
+The three security skills were written after direct upstream README, Docker, API/configuration and license reading on 2026-11-24; each records versions, URLs and local adaptations. Their wrappers run separately installed upstream images and vendor no upstream source. Image download/first real-run approval stays with the operator. The original six workflow skills remain instructions only; the two new scanner wrappers are separately invoked helpers, not runtime hooks or additional authority.

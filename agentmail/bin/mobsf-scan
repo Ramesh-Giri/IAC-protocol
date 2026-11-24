@@ -1,0 +1,346 @@
+#!/usr/bin/env python3
+"""Local MobSF release gate; stdlib API client runs inside an isolated container.
+
+No published port, host service, mounted application, remote daemon or image pull.
+Raw JSON/PDF stay private; original summarization code copies no upstream source.
+"""
+from __future__ import annotations
+
+import argparse
+from datetime import date, datetime, timezone
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import secrets
+import signal
+import subprocess
+import sys
+import time
+
+VERSION = "1.0.0"
+IMAGE = "opensecurity/mobile-security-framework-mobsf:v4.6.9"
+REPOSITORY = IMAGE.rsplit(":", 1)[0]
+OUTPUT = Path("~/Work/Aureus/.agent-mail/attachments/mobsf")
+INSPECT = "|".join("{{json ." + k + "}}" for k in (
+    "Id", "Config.Image", "Name", "HostConfig.NetworkMode", "NetworkSettings.Ports", "State"))
+
+# Our own HTTP transport, executed by Python already present in the pinned image.
+# Health sends no credential. Upload streams stdin only after the parent verifies
+# container identity. http.client does not follow redirects or use ambient proxies.
+API_CLIENT = r'''
+import http.client, json, os, sys
+action, argument = sys.argv[1:3]
+c = http.client.HTTPConnection('127.0.0.1', 8000, timeout=900)
+if action == 'health':
+    c.request('GET', '/login/')
+else:
+    headers = {'Authorization': os.environ['MOBSF_API_KEY']}
+    if action == 'upload':
+        ext, size = argument.split(':')
+        boundary = 'IACMobSFLocalUpload'
+        head = ('--' + boundary + '\r\nContent-Disposition: form-data; name="file"; '
+                'filename="release.' + ext + '"\r\nContent-Type: application/octet-stream\r\n\r\n').encode()
+        tail = ('\r\n--' + boundary + '--\r\n').encode()
+        c.putrequest('POST', '/api/v1/upload')
+        headers['Content-Type'] = 'multipart/form-data; boundary=' + boundary
+        headers['Content-Length'] = str(len(head) + int(size) + len(tail))
+        for k,v in headers.items(): c.putheader(k, v)
+        c.endheaders()
+        c.send(head)
+        remaining = int(size)
+        while remaining:
+            chunk = sys.stdin.buffer.read(min(1048576, remaining))
+            if not chunk: raise RuntimeError('short upload')
+            c.send(chunk)
+            remaining -= len(chunk)
+        c.send(tail)
+    else:
+        body = ('hash=' + argument).encode()
+        headers['Content-Type'] = 'application/x-www-form-urlencoded'
+        c.request('POST', '/api/v1/' + action, body, headers)
+r = c.getresponse()
+if r.status != 200: raise RuntimeError('MobSF HTTP status ' + str(r.status))
+if action == 'health':
+    # /login/ is the image's own readiness contract, not a host-port guess.
+    print('mobsf-login-ready')
+else:
+    data = r.read(64 * 1024 * 1024 + 1)
+    if len(data) > 64 * 1024 * 1024: raise RuntimeError('report too large')
+    sys.stdout.buffer.write(data)
+'''
+
+
+class Usage(ValueError):
+    pass
+
+
+class Parser(argparse.ArgumentParser):
+    def error(self, message):
+        raise Usage(message + "; valid flags: " + ", ".join(self._option_string_actions))
+
+
+def emit(**fields):
+    # A flat TOON object; JSON quotes are also valid TOON scalar quotes.
+    for key, value in fields.items():
+        print(f"{key}: {json.dumps(value, ensure_ascii=False)}")
+
+
+def docker(args, timeout=30, **kwargs):
+    env = {k: os.environ[k] for k in ("PATH", "HOME", "TMPDIR") if k in os.environ}
+    # Explicit local socket; ambient SSH/TCP Docker contexts cannot receive apps.
+    env["DOCKER_HOST"] = "unix:///var/run/docker.sock"
+    env.update(kwargs.pop("env", {}))
+    return subprocess.run(["docker"] + args, capture_output=True, timeout=timeout, env=env, **kwargs)
+
+
+def checked(args, **kwargs):
+    run = docker(args, **kwargs)
+    if run.returncode:
+        raise RuntimeError("local container operation failed; check Docker Desktop and the approved local image")
+    return run.stdout
+
+
+def cleanup_owned(name, token):
+    probe = docker(["inspect", "--format", "{{json .Config.Labels}}|{{json .Id}}", name])
+    if probe.returncode:
+        raise RuntimeError("cannot verify own container cleanup; operator must check " + name)
+    labels, id = [json.loads(x) for x in probe.stdout.decode().strip().split("|")]
+    if (not isinstance(labels, dict) or labels.get("org.iac.secscan") != token
+            or not re.fullmatch(r"[0-9a-f]{64}", id)):
+        raise RuntimeError("container cleanup ownership mismatch; unrelated containers were left untouched")
+    if docker(["rm", "-f", id]).returncode:
+        raise RuntimeError("own container cleanup failed; operator must remove " + name)
+
+
+def local_image():
+    raw = checked(["image", "inspect", "--format", "{{json .RepoDigests}}", IMAGE])
+    digests = json.loads(raw)
+    matches = [x for x in digests or [] if re.fullmatch(re.escape(REPOSITORY) + r"@sha256:[0-9a-f]{64}", x)]
+    if not matches:
+        raise RuntimeError("pinned image has no repository digest; operator must approve and pull the versioned image first")
+    return matches[0]
+
+
+def label(value):
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,100}", value):
+        raise Usage("app/release must start with a letter or digit and use only letters, digits, . _ + -")
+    return value
+
+
+def suppressions(path):
+    rows = json.loads(path.read_text()) if path else []
+    if not isinstance(rows, list):
+        raise Usage("suppressions must be an array of id, reason, expires objects")
+    found = {}
+    for row in rows:
+        if (not isinstance(row, dict) or set(row) != {"id", "reason", "expires"}
+                or not isinstance(row["id"], str) or not row["id"] or row["id"] in found
+                or not isinstance(row["reason"], str) or not row["reason"].strip()
+                or not isinstance(row["expires"], str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", row["expires"])):
+            raise Usage("each suppression needs unique id, nonempty reason and expires YYYY-MM-DD")
+        if date.fromisoformat(row["expires"]) < datetime.now(timezone.utc).date():
+            raise Usage("expired suppression; renew through its owner or remove it")
+        found[row["id"]] = row
+    return found
+
+
+def findings(report):
+    if (not isinstance(report, dict) or "error" in report or not report.get("package_name")
+            or not isinstance(report.get("manifest_analysis"), dict)
+            or not isinstance(report["manifest_analysis"].get("manifest_findings"), list)
+            or not isinstance(report.get("code_analysis"), dict)
+            or not isinstance(report["code_analysis"].get("findings"), dict)):
+        raise RuntimeError("incomplete MobSF Android report; scan failed, never treat as clean")
+    rows = []
+    def add(id, value):
+        if not isinstance(value, dict):
+            return
+        meta = value.get("metadata", value)
+        severity = str(meta.get("severity", value.get("severity", ""))).lower()
+        if severity in ("high", "warning", "medium"):
+            rows.append({"id": id, "severity": "high" if severity == "high" else "warning",
+                         "title": str(meta.get("description", value.get("title", id)))[:500]})
+    for i, row in enumerate(report["manifest_analysis"].get("manifest_findings", [])):
+        add("manifest:" + str(row.get("rule", row.get("name", i))), row)
+    for id, row in report["code_analysis"].get("findings", {}).items():
+        add("code:" + id, row)
+    def walk(value, path):
+        if isinstance(value, dict):
+            if "severity" in value or isinstance(value.get("metadata"), dict) and "severity" in value["metadata"]:
+                add(path, value)
+            else:
+                for key, child in value.items():
+                    walk(child, path + ":" + str(key))
+        elif isinstance(value, (list, tuple)):
+            if len(value) >= 2 and isinstance(value[0], str) and value[0].lower() in ("high", "warning", "medium", "info", "secure"):
+                id = hashlib.sha256(str(value[1]).encode()).hexdigest()[:16]
+                add(path + ":" + id, {"severity": value[0], "title": value[1]})
+            else:
+                for index, child in enumerate(value):
+                    key = child.get("rule", child.get("name", child.get("title", index))) if isinstance(child, dict) else index
+                    walk(child, path + ":" + str(key))
+    for section in ("certificate_analysis", "network_security", "binary_analysis", "file_analysis", "js_analysis"):
+        walk(report.get(section, {}), section)
+    return sorted(rows, key=lambda r: (r["severity"], r["id"]))
+
+
+def private_write(path, content):
+    with path.open("xb") as stream:
+        os.chmod(path, 0o600)
+        stream.write(content)
+
+
+def json_api(container, action, argument, **kwargs):
+    raw = checked(["exec", "-i", container, "python3", "-c", API_CLIENT, action, argument], timeout=1000, **kwargs)
+    if action == "download_pdf":
+        if not raw.startswith(b"%PDF-"):
+            raise RuntimeError("MobSF PDF report missing; scan is incomplete")
+        return raw
+    value = json.loads(raw)
+    if not isinstance(value, dict) or "error" in value:
+        raise RuntimeError("MobSF API reported a failed scan; use the same-commit release APK if AAB analysis failed")
+    return value
+
+
+def verify_container(container, name, image, deadline):
+    while time.monotonic() < deadline:
+        raw = checked(["inspect", "--format", INSPECT, container])
+        id, configured_image, actual_name, network, ports, state = [json.loads(x) for x in raw.decode().strip().split("|")]
+        if (id != container or configured_image != image or actual_name != "/" + name
+                or network != "none" or ports not in ({}, None)):
+            raise RuntimeError("container identity/network mismatch; refused before any upload or API credential")
+        if not state.get("Running"):
+            raise RuntimeError("MobSF container stopped before readiness")
+        if state.get("Health", {}).get("Status") == "healthy":
+            marker = checked(["exec", "-i", container, "python3", "-c", API_CLIENT, "health", ""], timeout=15)
+            if marker.strip() != b"mobsf-login-ready":
+                raise RuntimeError("MobSF readiness identity failed before upload")
+            return
+        time.sleep(1)
+    raise RuntimeError("MobSF readiness timeout; no upload was sent")
+
+
+def run_scan(args):
+    app, release = label(args.app), label(args.release)
+    artifact = args.artifact.resolve(strict=True)
+    if not artifact.is_file() or artifact.suffix.lower() not in (".apk", ".aab") or not 0 < artifact.stat().st_size <= 2 * 1024**3:
+        raise Usage("artifact must be a nonempty APK/AAB no larger than 2 GiB; prefer the release APK")
+    accepted = suppressions(args.suppressions)
+    out = args.output_root.resolve() / f"{app}-{release}"
+    if out.exists():
+        raise Usage("release output already exists; preserve it and use a distinct release/run label")
+    sha = hashlib.sha256()
+    with artifact.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1048576), b""):
+            sha.update(chunk)
+    artifact_sha = sha.hexdigest()
+    previous = None
+    if args.output_root.exists():
+        candidates = []
+        for p in args.output_root.glob(app + "-*/summary.json"):
+            old = json.loads(p.read_text())
+            if old.get("app") == app:
+                candidates.append((old.get("completed_at", ""), p, old))
+        if candidates:
+            _, p, old = max(candidates, key=lambda v: v[0])
+            previous = (p, old)
+    image = local_image()
+    out.mkdir(parents=True, mode=0o700)
+    name = "iac-mobsf-" + secrets.token_hex(12)
+    token = secrets.token_hex(24)
+    key = secrets.token_hex(32)
+    container = None
+    started = False
+    try:
+        started = True
+        raw = checked(["run", "-d", "--pull=never", "--name", name, "--label", "org.iac.secscan=" + token,
+                       "--network", "none", "--log-driver=none",
+                       "--cap-drop=ALL", "--security-opt", "no-new-privileges",
+                       "-e", "MOBSF_API_KEY", "-e", "MOBSF_API_ONLY=0",
+                       "-e", "MOBSF_VT_ENABLED=0", "-e", "MOBSF_VT_UPLOAD=0",
+                       "-e", "MOBSF_DOMAIN_MALWARE_SCAN=0", image], env={"MOBSF_API_KEY": key})
+        container = raw.decode().strip()
+        if not re.fullmatch(r"[0-9a-f]{64}", container):
+            raise RuntimeError("invalid container ID; refused before upload")
+        verify_container(container, name, image, time.monotonic() + args.ready_timeout)
+        with artifact.open("rb") as stream:
+            uploaded = json_api(container, "upload", artifact.suffix.lower()[1:] + ":" + str(artifact.stat().st_size), stdin=stream)
+        checksum = uploaded.get("hash", "")
+        if not re.fullmatch(r"[0-9a-f]{32}", checksum):
+            raise RuntimeError("MobSF upload did not return a valid hash")
+        json_api(container, "scan", checksum)
+        report = json_api(container, "report_json", checksum)
+        rows = findings(report)
+        if report.get("sha256") != artifact_sha:
+            raise RuntimeError("report hash differs from the supplied artifact; scan cannot pass")
+        pdf = json_api(container, "download_pdf", checksum)
+        private_write(out / "report.json", json.dumps(report, indent=2).encode())
+        private_write(out / "report.pdf", pdf)
+        for row in rows:
+            row["suppression"] = accepted.get(row["id"])
+        ids = {r["id"] for r in rows}
+        before = {r["id"] for r in previous[1]["findings"]} if previous else set()
+        old_rows = {r["id"]: r for r in previous[1]["findings"]} if previous else {}
+        summary = dict(app=app, release=release, completed_at=datetime.now(timezone.utc).isoformat(),
+                       image=image, artifact_sha256=artifact_sha, artifact_type=artifact.suffix[1:],
+                       package=report["package_name"], version_name=report.get("version_name"),
+                       version_code=report.get("version_code"), findings=rows,
+                       high=sum(r["severity"] == "high" and not r["suppression"] for r in rows),
+                       warning=sum(r["severity"] == "warning" and not r["suppression"] for r in rows),
+                       suppressed=sum(bool(r["suppression"]) for r in rows),
+                       previous=str(previous[0]) if previous else None,
+                       new=sorted(ids - before), resolved=sorted(before - ids),
+                       changed=sorted(r["id"] for r in rows if r["id"] in old_rows and
+                                      any(r[k] != old_rows[r["id"]][k] for k in ("severity", "title"))))
+    finally:
+        if started:
+            cleanup_owned(name, token)
+    private_write(out / "summary.json", json.dumps(summary, indent=2).encode())
+    emit(status="review-required" if summary["high"] or summary["warning"] else "pass",
+         high=summary["high"], warning=summary["warning"], suppressed=summary["suppressed"],
+         new=len(summary["new"]), changed=len(summary["changed"]), resolved=len(summary["resolved"]), reports=str(out))
+    return int(bool(summary["high"] or summary["warning"]))
+
+
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    if argv in (["-v"], ["-V"], ["--version"]):
+        print(VERSION)
+        return 0
+    p = Parser(description=__doc__, epilog="Example: mobsf-scan release.apk --app app --release 0.0.19+52")
+    p.add_argument("artifact", type=Path)
+    p.add_argument("--app", required=True)
+    p.add_argument("--release", required=True)
+    p.add_argument("--output-root", type=Path, default=OUTPUT)
+    p.add_argument("--suppressions", type=Path)
+    p.add_argument("--ready-timeout", type=int, default=300)
+    if not argv:
+        emit(bin=str(Path(__file__).resolve()), description="Local MobSF Android release scan", status="idle",
+             help="mobsf-scan <release.apk> --app <app> --release <version+build>")
+        return 0
+    old = signal.getsignal(signal.SIGTERM)
+    try:
+        signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(KeyboardInterrupt()))
+        args = p.parse_args(argv)
+        if not 1 <= args.ready_timeout <= 900:
+            raise Usage("--ready-timeout must be 1..900 seconds")
+        return run_scan(args)
+    except SystemExit as exc:
+        return int(exc.code)
+    except (Usage, FileNotFoundError, ValueError, TypeError) as exc:
+        emit(error=str(exc), help="mobsf-scan <release.apk> --app <app> --release <version+build>")
+        return 2
+    except RuntimeError as exc:
+        emit(error=str(exc) + "; no clean result", help="mobsf-scan <same-commit-release.apk> --app <app> --release <new-run-label>")
+        return 1
+    except (OSError, subprocess.SubprocessError, KeyboardInterrupt):
+        emit(error="scan failed or incomplete; no clean result", help="Check the local image and APK; preserve partial evidence and rerun with a new release label")
+        return 1
+    finally:
+        signal.signal(signal.SIGTERM, old)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
