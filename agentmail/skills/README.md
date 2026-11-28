@@ -1,7 +1,7 @@
 <!-- Indexes original IAC workflow skills, their shared authority limits and inspected upstream inspiration. -->
 # IAC skills
 
-These are original repository-local instructions for IAC and app work, written after source review on 2026-11-23 and 2026-11-24.
+These are original repository-local instructions for IAC work, written after source review on 2026-11-23 and 2026-11-24.
 They are not installed third-party packages, runtime hooks or a permission system.
 The scanner skills also have separately invoked wrapper programs; those helpers do not add authority.
 Codex and Claude seats can read the relevant `SKILL.md` directly from a task brief; no global registration or installer is required.
@@ -14,7 +14,7 @@ The descriptions identify when to load each skill.
 | [evidence-loop](evidence-loop/SKILL.md) | Gather bounded evidence, commit a plan and independently try to disprove the result. | [Fable Loop](https://www.skillsdirectory.com/skills/mikalaikryvusha-fable-loop-2d7adbce) |
 | [scheduled-loop](scheduled-loop/SKILL.md) | Prepare a charter, outcome check and bounded overnight runner. | [New Loop](https://www.skillsdirectory.com/skills/albertnahas-new-loop) |
 | [test-value-audit](test-value-audit/SKILL.md) | Report weak tests and check sensitivity against the base implementation. | [Audit Tests](https://www.skillsdirectory.com/skills/ku5ic-audit-tests) |
-| [flutter-a11y-audit](flutter-a11y-audit/SKILL.md) | Verify Flutter accessibility alongside app's Material 3 gate. | [Accessibility](https://www.skillsdirectory.com/skills/evanca-accessibility) |
+| [flutter-a11y-audit](flutter-a11y-audit/SKILL.md) | Verify Flutter accessibility alongside the project's Material 3 gate. | [Accessibility](https://www.skillsdirectory.com/skills/evanca-accessibility) |
 | [mobile-app-scan](mobile-app-scan/SKILL.md) | Gate Android store uploads on local JSON/PDF evidence and reviewed findings; wrapper: `bin/mobsf-scan`. | [MobSF v4.6.9](https://github.com/MobSF/Mobile-Security-Framework-MobSF/tree/v4.6.9), GPL-3.0-only, separate Docker program |
 | [web-dast-scan](web-dast-scan/SKILL.md) | Run inventory-only ZAP baselines weekly/after deploys; require both permissions for active modes; wrapper: `bin/zap-scan`. | [ZAP v2.17.0](https://github.com/zaproxy/zaproxy/tree/v2.17.0), Apache-2.0, separate Docker program |
 | [waf-fit](waf-fit/SKILL.md) | Plan SafeLine fit, human-operated pilot and rollback; Ramesh approval required before WAF changes. | [SafeLine v9.4.7](https://github.com/chaitin/SafeLine/tree/v9.4.7), GPL-3.0, plan only |
@@ -103,7 +103,7 @@ Complement the installed `gstack-test-audit` whole-repo candidate/retirement wor
 
 Credit: Ivanna (evanca), [evanca/flutter-ai-rules](https://github.com/evanca/flutter-ai-rules), [MIT license](https://github.com/evanca/flutter-ai-rules/blob/ced864ab5189956dbf719a84011c24d860092116/LICENSE).
 Read [accessibility/SKILL.md](https://github.com/evanca/flutter-ai-rules/blob/ced864ab5189956dbf719a84011c24d860092116/skills/accessibility/SKILL.md) at `ced864ab5189956dbf719a84011c24d860092116`, its cognitive-accessibility and motion/sensory references, and the sibling inclusive-design overview.
-Keep manual assistive-tool verification; translate browser-oriented checks to Flutter semantics, hit areas, text scaling and platform motion settings within app's existing Material 3 gate.
+Keep manual assistive-tool verification; translate browser-oriented checks to Flutter semantics, hit areas, text scaling and platform motion settings within the project's existing Material 3 gate.
 No exfiltration, remote-code execution or check-disabling instruction was found in the inspected accessibility files.
 Compatibility risk: browser ARIA/CSS examples and a generic motion flag cannot substitute for actual native semantics and per-platform verification.
 

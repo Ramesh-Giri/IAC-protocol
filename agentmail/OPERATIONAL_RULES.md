@@ -479,11 +479,11 @@ A run whose ratios are drifting toward the 31 Oct 2026 numbers stops launching a
 ## 53. Loading, empty and error states are deliverables
 
 Every task that touches a screen delivers its loading, empty and error states with the happy path, and the reviewer checks them.
-A failure state keeps the page chrome the product uses everywhere (for app: the bottom bar with Back and the page title), shows an icon and one human sentence about what failed, offers a primary Retry, and shows partial data when only part of the load failed.
+A failure state keeps the page chrome the product uses everywhere (for example, a bottom bar with Back and the page title), shows an icon and one human sentence about what failed, offers a primary Retry, and shows partial data when only part of the load failed.
 Technical identifiers (keys, ids, codes) may appear as a copyable detail below the message, never as the headline, and never as the only content.
 A blank page, a raw exception string, or an identifier with a Retry chip is a defect, not an error state.
 When the operator reports a broken screen, the state design is fixed in the same round as the root cause, design first.
-Origin: 2026-11-03, the other-user profile failure screen on app ("is that how you show an error screen? fix that first, then find out why").
+Origin: 2026-11-03, a profile failure screen review ("fix the error screen first, then find out why").
 
 Revision: public rules generalized; original site-specific rules are preserved in the ignored local overlay.
 

@@ -1,6 +1,6 @@
 ---
 name: acceptance-gate
-description: Check IAC or app completion evidence before merge or a READY claim. Use when a runner sends DONE, a batch is proposed for integration, or required checks and manual evidence need an independent verdict.
+description: Check IAC or product completion evidence before merge or a READY claim. Use when a runner sends DONE, a batch is proposed for integration, or required checks and manual evidence need an independent verdict.
 ---
 
 <!-- Defines independent runner/checker acceptance and source-bound verdicts before integration. -->

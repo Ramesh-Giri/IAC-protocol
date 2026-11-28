@@ -14,7 +14,7 @@ A WAF plan or installation does not replace application fixes or satisfy unrelat
 
 | Workload | Fit | Protection decision |
 | --- | --- | --- |
-| app web: Firebase Hosting + Cloud Functions | Do not insert SafeLine into these managed edges by default. There is no host-level ingress under our control there. | Review Firebase/Google's own supported edge/application controls and, where compatible with the verified domain/routing setup, a separately approved Cloudflare edge. Functions still need authentication, authorization, abuse limits and application fixes. |
+| Web app on Firebase Hosting + Cloud Functions | Do not insert SafeLine into these managed edges by default. There is no host-level ingress under our control there. | Review Firebase/Google's own supported edge/application controls and, where compatible with the verified domain/routing setup, a separately approved Cloudflare edge. Functions still need authentication, authorization, abuse limits and application fixes. |
 | apu.bot landing: Vercel | Do not install SafeLine on the Vercel platform. | Review Vercel's own firewall/protection controls or a separately assessed Cloudflare front door. Validate domain, caching, TLS, client-IP and origin-bypass behavior first. |
 | Circle: GCP Linux VMs | Candidate for an isolated pilot; insufficient evidence to approve production installation now. | Prefer a dedicated WAF VM in front of the existing origin, with a human-configured origin allowlist. Inspect current VM capacity and topology through Ramesh's evidence before deciding placement. Same-VM ingress would contend for 80/443 and share a failure domain. |
 

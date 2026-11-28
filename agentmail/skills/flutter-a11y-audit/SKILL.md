@@ -1,9 +1,9 @@
 ---
 name: flutter-a11y-audit
-description: Audit a app Flutter screen or flow for semantics, screen-reader order, 48dp targets, contrast, keyboard focus, large text and reduced motion. Use on Flutter UI changes or accessibility reports alongside the Material 3 design gate.
+description: Audit a Flutter screen or flow for semantics, screen-reader order, 48dp targets, contrast, keyboard focus, large text and reduced motion. Use on Flutter UI changes or accessibility reports alongside the Material 3 design gate.
 ---
 
-<!-- Defines Flutter accessibility evidence alongside app's existing Material 3 review. -->
+<!-- Defines Flutter accessibility evidence alongside the project's existing Material 3 review. -->
 # Flutter accessibility audit
 
 Read the [shared seat boundaries](../README.md#shared-seat-boundaries), IAC rules 25, 43 and 53, and `~/.claude/skills/material3-ui/SKILL.md` with its brand-kit and review-rubric references.
@@ -11,7 +11,7 @@ Use the consuming repo's approved brand pin, semantic color/type roles and exist
 Audit only unless the task also delegates remediation.
 
 1. Name the route, full source SHA/patch identity, device/browser, Flutter version, viewport, appearance and user task.
-   Cover Android and web for app, all supported appearances, and loading, empty, error and successful states.
+   Cover every shipped platform (for example Android and web), all supported appearances, and loading, empty, error and successful states.
    Reserve shared device time through the overseer; report unavailable platforms as gaps.
 2. Inspect the Flutter semantics tree and the actual screen-reader announcements.
    Check meaningful names, roles, values, checked/selected/expanded/disabled states, headings, image descriptions and understandable error announcements.

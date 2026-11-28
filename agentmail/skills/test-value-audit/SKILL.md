@@ -1,6 +1,6 @@
 ---
 name: test-value-audit
-description: Audit the regression value of tests in a named IAC or app change without editing them. Use for tests that cannot fail, duplicates, implementation coupling or trivial checks, especially when a new test should fail against the base implementation.
+description: Audit the regression value of tests in a named IAC or product change without editing them. Use for tests that cannot fail, duplicates, implementation coupling or trivial checks, especially when a new test should fail against the base implementation.
 ---
 
 <!-- Defines report-only test-value analysis and isolated base-versus-candidate evidence. -->

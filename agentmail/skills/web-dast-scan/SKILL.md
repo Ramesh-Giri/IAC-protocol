@@ -31,7 +31,7 @@ The generated access step disables automatic redirects; the scoped spider can di
 
 ## Reports and disposition
 
-Reports go to `~/Work/Aureus/.agent-mail/attachments/zap/<host>/<UTC-date>/<unique-run>/`: `report.html`, `report.json`, `summary.json`, generated `rules.conf` and the original generated hook. The run also retains private `console.log`, ZAP's `zap.log`, and the packaged daemon's `zap.out` when created. Keep private response content and host inventory out of source control. Raw alerts remain available even when a rule is ignored for the gate.
+Reports go to `<IAC root>/.agent-mail/attachments/zap/<host>/<UTC-date>/<unique-run>/`: `report.html`, `report.json`, `summary.json`, generated `rules.conf` and the original generated hook. The run also retains private `console.log`, ZAP's `zap.log`, and the packaged daemon's `zap.out` when created. Keep private response content and host inventory out of source control. Raw alerts remain available even when a rule is ignored for the gate.
 
 On completion, failure, timeout or interruption, console output is retained before cleanup. After verifying ownership, the wrapper stops only its own container, recovers its bounded Docker console logs and copies the application log before removing it. The configured ZAP home is `/tmp/iac-zap`, so that log is tried first; `/home/zap/.ZAP/zap.log` is the fallback for images using their original home. The resulting host file is always `zap.log` with mode 0600. Log-capture failure remains nonzero and is recorded in `console.log`; if ZAP never started there may be no application log to copy. Engine logs are limited to two 10 MB files and disappear with the owned container. No failing scan is made clean merely to obtain reports.
 

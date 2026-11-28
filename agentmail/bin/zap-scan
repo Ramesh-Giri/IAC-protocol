@@ -20,8 +20,8 @@ import sys
 
 VERSION = "1.0.1"
 ROOT = Path(__file__).resolve().parents[2]
-INVENTORY = Path("~/Work/Aureus/local/websec.local.json")
-OUTPUT = Path("~/Work/Aureus/.agent-mail/attachments/zap")
+INVENTORY = Path(__file__).resolve().parents[2] / "local" / "websec.local.json"
+OUTPUT = Path(__file__).resolve().parents[2] / ".agent-mail" / "attachments" / "zap"
 IMAGE = "zaproxy/zap-stable:2.17.0"
 REPOSITORY = IMAGE.rsplit(":", 1)[0]
 

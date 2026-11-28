@@ -1,6 +1,6 @@
 # Change report: IAC-STARTUP-GUARD-1101
 
-Repo `~/Work/Aureus`, branch `main`, range `bc29de6..working tree`.
+Repo `<IAC root>`, branch `main`, range `bc29de6..working tree`.
 0 commits, 0 merges, 4 files, +476 / -34 lines.
 
 Part 1 is written by the authoring agent. Part 2 is generated from git by `agentmail/bin/change-report` and is the ground truth: if they disagree, Part 2 wins and the disagreement is a review finding.
@@ -15,7 +15,7 @@ Those captures establish the layouts; the earlier interruption history remains o
 This change recognizes the current bottom UI block, gives activity precedence over idle, removes Escape from unknown-screen handling, and requires a separate successful capture before submitting exact pending boot text.
 The final B1 correction also prevents whitespace already admitted by the activity regex from making Compacting look like Working and bypass its bounded wait.
 
-The canonical integration is `~/Work/Aureus`, on `main` at unchanged base/HEAD `bc29de69df31e14082a4186b6cff72a4960960dd` before the root-owned commit.
+The canonical integration is `<IAC root>`, on `main` at unchanged base/HEAD `bc29de69df31e14082a4186b6cff72a4960960dd` before the root-owned commit.
 The exact accepted two-file source is `agentmail/bin/agentmail-launch` SHA256 `4442dfc327ed301baa512b7a85f16ce4f2172c7edbfacfb11dec82b4f83a03bd`, mode 0755, and `agentmail/SUPERVISOR_BOOTSTRAP.md` SHA256 `e5af6887031af662a3848db1a68126ca900f86727f226946c38607620ebf52fc`, mode 0644.
 Integration also adds the maintained `docs/map/PROJECT_MAP.md`, `docs/map/graph.json` and this generated report.
 The author's preserved local-only branch `fix/codex-startup-guard-1101` is historical source evidence, not the canonical integration branch.
@@ -75,7 +75,7 @@ The code includes a `shortcut:` comment for the remaining capture-to-delivery in
 Canonical integration ran `PYTHONDONTWRITEBYTECODE=1 python3 agentmail/bin/agentmail-launch --self-check` once: actual exit 0 in 0.322 seconds, stdout `startup trust self-check: passed`.
 The exact launcher, bootstrap, `iac.py`, `model_guard.py` and Git index hashes/modes stayed unchanged through actual exit; read-only `git diff --check` also exited 0.
 `SELF_CHECK/receipt.json`, stdout and stderr preserve this canonical execution separately from all author/reviewer attempts.
-The actual canonical import warning reports no site model policy at `~/Work/Aureus/local/model-policy.json` and zero site model restrictions active.
+The actual canonical import warning reports no site model policy at `<IAC root>/local/model-policy.json` and zero site model restrictions active.
 No policy/profile/configuration was created, changed or qualified to silence it.
 The maintained check returns before roster/catalogue/launch work and mocks every target capture/key/window subprocess and sleep.
 
@@ -148,7 +148,7 @@ The report itself is excluded from its own generated facts using the maintained 
 Publication is not authorized.
 
 The root-owned `AUREUS_TEST_CASES.xlsx` was inspected read-only as ZIP/XML and remains SHA256 `9f3f3cdc39f5a51c6a2a1c5d129fb7e05decd6ff1872a1ce41bcf59b50d4be11`.
-Its actual tabs are CIRCLE, app, project-b and AGENTS; no IAC tab or matching operator-startup case was found.
+Its actual tabs are one per project plus AGENTS; no IAC tab or matching operator-startup case was found.
 `OPERATOR_STARTUP_PENDING.json` records the new IAC operator case using the existing six-column ID/Feature area/Test case/Expected result/Actual result/Status schema at A1:F2.
 Root staging reply `6351643e-94c5-4052-8b09-9e85f330010a` accepted this placement and delegated preparation of the external workbook candidate.
 `AUREUS_TEST_CASES_IAC_STARTUP_GUARD_1101_CANDIDATE.xlsx` in the canonical integration evidence directory is SHA256 `349d0250b0f8ea46ab74877fa97024e2359a53528abde318afa93b0b4fb520ca`; it adds only the IAC tab and twelve header/case cells at A1:F2.
@@ -161,7 +161,7 @@ The proposed case `IAC-STARTUP-GUARD-1101-01` is PENDING and records the offline
 Root owns canonical workbook intake and mutation; this task wrote no canonical workbook cell and did no recalculation or rendering, preserving all 24 formulas, their caches, styles and unrelated ZIP records.
 `conversation-context/OPERATOR_REQUESTS.md` remains the unchanged alias to the one `RAMESH_REQUESTS.md` ledger; no second request ledger was created.
 
-The maintained `project-map --repo ~/Work/Aureus --roots agentmail` generated the two canonical map records: 31 public tracked supported-source files, 29 documented, 29 internal links.
+The maintained `project-map --repo <IAC root> --roots agentmail` generated the two canonical map records: 31 public tracked supported-source files, 29 documented, 29 internal links.
 No previous canonical `docs/map/` existed, so no map backup was needed; this absence is recorded in `PROJECT_MAP.receipt.json`.
 Collection is limited to tracked IAC `agentmail/` source, with no foreign business repositories, ignored attachments or credentials included.
 The maintained extension filter excludes extensionless executables and Markdown, including the changed launcher/bootstrap, so their exact intake is covered by the separate source seal and report; generated map facts were not manually expanded or edited.

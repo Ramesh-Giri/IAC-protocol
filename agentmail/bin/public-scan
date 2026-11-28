@@ -1,0 +1,20 @@
+#!/usr/bin/env python3
+"""Fail if a tracked (or staged, with --staged) file holds an absolute home path or a term from local/public-denylist.txt.
+The repo is public: private names live only in the ignored denylist, never in tracked files."""
+import pathlib, re, subprocess, sys
+root = pathlib.Path(__file__).resolve().parents[2]
+deny = root / 'local' / 'public-denylist.txt'
+pats = [re.compile(r'/Users/[A-Za-z0-9._-]+/')]
+if deny.exists():
+    pats += [re.compile(l.strip(), re.I) for l in deny.read_text().splitlines() if l.strip() and not l.startswith('#')]
+staged = '--staged' in sys.argv
+files = subprocess.run(['git', '-C', str(root), 'diff', '--cached', '--name-only', '--diff-filter=ACMR'] if staged else ['git', '-C', str(root), 'ls-files'],
+                       capture_output=True, text=True).stdout.split()
+bad = []
+for f in files:
+    text = subprocess.run(['git', '-C', str(root), 'show', f':{f}'], capture_output=True).stdout if staged else (root / f).read_bytes() if (root / f).is_file() else b''
+    for n, line in enumerate(text.decode('utf-8', 'replace').splitlines(), 1):
+        if any(p.search(line) for p in pats): bad.append(f'{f}:{n}')
+if bad:
+    print('public-scan: private name or home path in public files (value not printed):'); print('\n'.join(bad)); sys.exit(1)
+print(f'public-scan: {len(files)} files clean' + ('' if deny.exists() else ' (no local/public-denylist.txt: paths only)'))

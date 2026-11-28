@@ -1,6 +1,6 @@
 ---
 name: build-gate
-description: Decide whether an IAC or app build, full suite, release artifact, or deployment handoff should happen now. Use before requesting or starting one, especially after several small fixes or when the Mac is busy.
+description: Decide whether an IAC or product build, full suite, release artifact, or deployment handoff should happen now. Use before requesting or starting one, especially after several small fixes or when the Mac is busy.
 ---
 
 <!-- Defines the IAC pre-build decision and evidence handoff; owns no runner or deployment authority. -->

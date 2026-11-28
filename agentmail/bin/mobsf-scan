@@ -22,7 +22,7 @@ import time
 VERSION = "1.0.0"
 IMAGE = "opensecurity/mobile-security-framework-mobsf:v4.6.9"
 REPOSITORY = IMAGE.rsplit(":", 1)[0]
-OUTPUT = Path("~/Work/Aureus/.agent-mail/attachments/mobsf")
+OUTPUT = Path(__file__).resolve().parents[2] / ".agent-mail" / "attachments" / "mobsf"
 INSPECT = "|".join("{{json ." + k + "}}" for k in (
     "Id", "Config.Image", "Name", "HostConfig.NetworkMode", "NetworkSettings.Ports", "State"))
 
@@ -309,7 +309,7 @@ def main(argv=None):
     if argv in (["-v"], ["-V"], ["--version"]):
         print(VERSION)
         return 0
-    p = Parser(description=__doc__, epilog="Example: mobsf-scan release.apk --app app --release 0.0.19+52")
+    p = Parser(description=__doc__, epilog="Example: mobsf-scan release.apk --app myapp --release 0.0.19+52")
     p.add_argument("artifact", type=Path)
     p.add_argument("--app", required=True)
     p.add_argument("--release", required=True)
