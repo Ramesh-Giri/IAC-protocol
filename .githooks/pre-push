@@ -1,0 +1,14 @@
+#!/bin/sh
+# Block pushing commits whose content or message holds a private term / home path (see agentmail/bin/public-scan).
+root="$(git rev-parse --show-toplevel)"; deny="$root/local/public-denylist.txt"
+pat='/Users/[A-Za-z0-9._-]+/'
+[ -f "$deny" ] && pat="$pat|$(grep -v '^#' "$deny" | grep -v '^$' | paste -sd'|' -)"
+z=0000000000000000000000000000000000000000
+while read -r lref lsha rref rsha; do
+  [ "$lsha" = "$z" ] && continue
+  if [ "$rsha" = "$z" ]; then range="$lsha --not --remotes"; else range="$rsha..$lsha"; fi
+  if git log -p --format=%B $range | grep -iqE "$pat"; then
+    echo "pre-push: $lref has commits with a private name or home path (history, not just files). Not pushed."; exit 1
+  fi
+done
+exit 0
