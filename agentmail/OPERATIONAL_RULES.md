@@ -572,3 +572,25 @@ Review the baseline's production-readiness controls for concurrency, query cost,
 Mark legal-only decisions **ask a lawyer**: the checklist is not legal advice.
 Keep product and technical decision ownership separate.
 This baseline, research and attachments grant no authority to implement, scan, deploy or run cloud commands.
+
+## 65. Deploy only what the change reaches
+
+Before any deploy, list each deployable the change actually reaches (functions by name, database/storage rules, hosting sites, indexes) and show the count to the human who runs it.
+Never deploy a whole project or every function to ship a partial change; an unrelated target picked up by a blanket deploy can break production or ship unreviewed code.
+The deploy command names exactly those targets, and the DONE report lists them with the served-result check for each.
+Origin: 2026-11-05, a project with hundreds of functions where a blanket deploy would have shipped far more than the reviewed change.
+
+## 66. Prove a secret is unused before destroying it
+
+Removing a secret from source does not unbind it from deployed services.
+Before deleting, disabling or destroying any secret, key or credential: list every deployed binding, redeploy those services without it, verify they serve correctly, and only then destroy it.
+Never use a forced destroy without that zero-binding evidence; record the evidence in the change report.
+Origin: 2026-11-05, a secret destroyed while still bound took down about twenty deployed functions.
+
+## 67. Scan every repository for secrets and private names
+
+Every product repository gets a pre-commit secret scanner (for example gitleaks) at setup, plus one full-history scan; nobody bypasses it, and a hit blocks the commit until it is removed and, if it ever left the machine, rotated (baseline P16).
+Public repositories additionally run `agentmail/bin/public-scan` (pre-commit and test) and the `.githooks/pre-push` history check, with private names kept only in the ignored `local/public-denylist.txt`.
+Write examples with generic names (`the app`, `<IAC root>`, repo-relative paths); never real product, company or people names or absolute home paths.
+If a private term reaches a public remote, scrub the files, rewrite the history with git-filter-repo, force-push every branch after the owner's approval, and ask the host to purge cached commits.
+Origin: 2026-11-28, private names and paths re-entered this public repository after an earlier cleanup because nothing enforced it.
